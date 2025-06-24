@@ -1,0 +1,18 @@
+use std::process;
+
+fn main() {
+    if let Err(error) = lalrpop::process_src() {
+        exit_error(&*error)
+    }
+}
+
+fn exit_error(error: &dyn std::error::Error) -> ! {
+    eprintln!("Failed!");
+    let mut next = Some(error);
+    while let Some(current) = next {
+        eprintln!("Caused by:");
+        eprintln!("  {current}");
+        next = current.source();
+    }
+    process::exit(1)
+}

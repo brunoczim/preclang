@@ -1,0 +1,54 @@
+use crate::{
+    ast::{Expr, PrefixOperation},
+    lexer::LexError,
+    token::{Token, Operator, BinaryOperator, PrefixOperator, Punctuation},
+    subs::Substitution,
+    location::{Span, Spanned},
+};
+
+grammar;
+
+pub Expr: Expr = {
+    HigherPrecExpr => HigherPrecExpr,
+    HighPrecExpr => HighPrecExpr,
+    MidPrecExpr => MidPrecExpr,
+    LowPrecExpr => LowPrecExpr,
+};
+
+pub SubsExpr: Expr 
+
+pub HigherPrecExpr: Expr = {
+    <s:"{substitution}"> => Expr::Substitution(Box::new(s)),
+    ! HigherPrecExpr => Expr::PrefixOperation(Box::new(
+};
+
+pub HighPrecPrefixOperation: PrefixOperation = {
+    <l:@L> "!" <r:@R> <e: Spanned<Expr>> => PrefixOperation {
+        operator: Spanned {
+            data: PrefixOperator::Bang,
+            span: Span { start: l, end: r },
+        },
+        operand: e,
+    },
+};
+
+pub Spanned<Rule>: Spanned<Rule> = <l:@L> <data: Rule> <r:@R> =>
+    Spanned {
+        data,
+        span: Span { start: l, end: r },
+    }
+
+extern {
+    type Location = crate::location::Location;
+    type Error = LexError;
+
+    enum Token {
+        ";" => Token::Operator(Operator::Binary(BinaryOperator::Semicolon)),
+        "|" => Token::Operator(Operator::Binary(BinaryOperator::Pipe)),
+        "&" => Token::Operator(Operator::Binary(BinaryOperator::Ampersand)),
+        "!" => Token::Operator(Operator::Prefix(PrefixOperator::Bang)),
+        "{substitution}" => Token::Substitution(<Substitution>),
+        "(" => Token::Punct(Punctuation::OpenParen),
+        ")" => Token::Punct(Punctuation::CloseParen),
+    }
+}

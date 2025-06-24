@@ -1,5 +1,7 @@
 use regex::Regex;
 
+use crate::location::SpanlessEq;
+
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub regex: Regex,
@@ -10,6 +12,10 @@ impl PartialEq for Pattern {
         self.regex.as_str() == other.regex.as_str()
     }
 }
+
+impl Eq for Pattern {}
+
+impl SpanlessEq for Pattern {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
@@ -23,6 +29,8 @@ pub enum Flag {
     SwapGreed = 0x40,
     IgnoreWhitespace = 0x80,
 }
+
+impl SpanlessEq for Flag {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Flags {
@@ -44,6 +52,8 @@ impl Flags {
     }
 }
 
+impl SpanlessEq for Flags {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fragment {
     Text(String),
@@ -51,14 +61,20 @@ pub enum Fragment {
     RefName(String),
 }
 
+impl SpanlessEq for Fragment {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Replacement {
     pub fragments: Vec<Fragment>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl SpanlessEq for Replacement {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Substitution {
     pub pattern: Pattern,
     pub replacement: Replacement,
     pub flags: Flags,
 }
+
+impl SpanlessEq for Substitution {}

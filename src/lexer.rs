@@ -1,390 +1,343 @@
-use nom::{
-    IResult,
-    Parser,
-    branch::alt,
-    bytes::complete::{escaped, tag, take_while1},
-    character::{
-        self,
-        complete::{alphanumeric0, anychar, char, multispace0, none_of},
-    },
-    combinator::{cut, opt, value, verify},
-    multi::{fold_many0, fold_many1, many0},
-    sequence::{delimited, preceded, terminated},
-};
+use std::{num::ParseIntError, str::Chars};
+
 use regex::RegexBuilder;
 
 use crate::{
+    location::{Location, Span, Spanned},
     subs::{Flag, Flags, Fragment, Pattern, Replacement, Substitution},
-    token::{Operator, Punctuation, Token},
+    token::{BinaryOperator, Operator, PrefixOperator, Punctuation, Token},
 };
 
-fn wrap_token_lexing<'a, P>(
-    parser: P,
-) -> impl Parser<&'a str, Output = P::Output, Error = P::Error>
-where
-    P: Parser<&'a str>,
-{
-    delimited(multispace0, parser, multispace0)
+#[derive(Debug, Clone)]
+pub enum LexError {
+    PrematureSubsEnd(Span),
+    InvalidRefInt(Span),
+    InvalidRefStart(Location),
+    InvalidRefNameTail(Location),
+    ParseRefInt(ParseIntError, Span),
+    Regex(regex::Error, Span),
+    InvalidFlag(Location),
+    InvalidOperator(Span),
+    InvalidPunct(Location),
+    InvalidChar(Location),
 }
 
-pub fn lex_flag(input: &str) -> IResult<&str, Flag> {
-    alt((
-        value(Flag::Global, char('g')),
-        value(Flag::Insensitive, char('i')),
-        value(Flag::Multiline, char('m')),
-        value(Flag::Unicode, char('u')),
-        value(Flag::DotNewline, char('s')),
-        value(Flag::Crlf, char('r')),
-        value(Flag::SwapGreed, char('G')),
-        value(Flag::IgnoreWhitespace, char('S')),
-    ))
-    .parse(input)
+#[derive(Debug, Clone)]
+pub struct Lexer<'input> {
+    full_input: &'input str,
+    position: usize,
+    current: Option<char>,
+    chars: Chars<'input>,
 }
 
-pub fn lex_flags(input: &str) -> IResult<&str, Flags> {
-    terminated(
-        fold_many0(lex_flag, Flags::default, |flags, flag| flags.with(flag)),
-        cut(verify(alphanumeric0, str::is_empty)),
-    )
-    .parse(input)
-}
+impl<'input> Lexer<'input> {
+    pub fn new(input: &'input str) -> Self {
+        let mut chars = input.chars();
+        let current = chars.next();
+        Lexer { full_input: input, position: 0, current, chars }
+    }
 
-pub fn lex_pattern_str(input: &str) -> IResult<&str, &str> {
-    escaped(none_of("\\/"), '\\', anychar).parse(input)
-}
+    fn advance(&mut self) -> Option<(usize, char)> {
+        let current = self.current?;
+        let position = self.position;
+        self.current = self.chars.next();
+        self.position += current.len_utf8();
+        Some((position, current))
+    }
 
-pub fn lex_fragment(input: &str) -> IResult<&str, Fragment> {
-    alt((
-        preceded(char('\\'), character::complete::u32.map(Fragment::RefInt)),
-        preceded(
-            char('\\'),
-            delimited(
-                char('{'),
-                character::complete::u32.map(Fragment::RefInt),
-                char('}'),
-            ),
-        ),
-        preceded(
-            char('\\'),
-            delimited(
-                char('{'),
-                character::complete::alphanumeric1
-                    .map(|s: &str| Fragment::RefName(s.to_owned())),
-                char('}'),
-            ),
-        ),
-        preceded(char('\\'), anychar.map(|ch| Fragment::Text(ch.to_string()))),
-        fold_many1(none_of("\\/"), String::new, |mut acc, ch| {
-            acc.push(ch);
-            acc
-        })
-        .map(Fragment::Text),
-    ))
-    .parse(input)
-}
+    fn starts_subs(&self, ch: char) -> bool {
+        ch == 's'
+    }
 
-pub fn lex_replacement(input: &str) -> IResult<&str, Replacement> {
-    many0(lex_fragment).map(|fragments| Replacement { fragments }).parse(input)
-}
+    fn is_operator(&self, ch: char) -> bool {
+        ";&|!".contains(ch)
+    }
 
-pub fn lex_substitution_token(input: &str) -> IResult<&str, Substitution> {
-    let parser = preceded(
-        tag("s/"),
-        (
-            lex_pattern_str,
-            preceded(char('/'), lex_replacement),
-            opt(preceded(char('/'), opt(lex_flags))),
-        ),
-    )
-    .map_res(|(pattern_str, replacement, maybe_flags)| {
-        let flags = maybe_flags.flatten().unwrap_or_default();
-        let mut regex_builder = RegexBuilder::new(pattern_str);
-        regex_builder
-            .crlf(flags.test(Flag::Crlf))
+    fn is_punct(&self, ch: char) -> bool {
+        "()".contains(ch)
+    }
+
+    fn lex_subs(&mut self, ch: char) -> Result<Spanned<Token>, LexError> {
+        let start = self.position;
+        self.advance();
+        let Some(current) = self.current else {
+            Err(LexError::PrematureSubsEnd(Span {
+                start,
+                end: start + ch.len_utf8(),
+            }))?
+        };
+        if current != '/' {
+            Err(LexError::PrematureSubsEnd(Span {
+                start,
+                end: start + ch.len_utf8(),
+            }))?
+        }
+        self.advance();
+        let pattern_range = self.lex_pattern_range(start)?;
+        let replacement = self.lex_replacement(start)?;
+        let flags = self.lex_flags()?;
+        let mut regex_builder = RegexBuilder::new(
+            &self.full_input[pattern_range.start .. pattern_range.end],
+        );
+        let regex = regex_builder
+            .unicode(flags.test(Flag::Unicode))
+            .dot_matches_new_line(flags.test(Flag::DotNewline))
             .case_insensitive(flags.test(Flag::Insensitive))
             .ignore_whitespace(flags.test(Flag::IgnoreWhitespace))
             .swap_greed(flags.test(Flag::SwapGreed))
-            .unicode(flags.test(Flag::Unicode))
             .multi_line(flags.test(Flag::Multiline))
-            .dot_matches_new_line(flags.test(Flag::DotNewline));
-        let regex = regex_builder.build()?;
-        Result::<_, regex::Error>::Ok(Substitution {
-            pattern: Pattern { regex },
-            replacement,
-            flags,
-        })
-    });
-    wrap_token_lexing(parser).parse(input)
-}
+            .crlf(flags.test(Flag::Crlf))
+            .build()
+            .map_err(|source| {
+                LexError::Regex(source, Span { start, end: self.position })
+            })?;
+        let pattern = Pattern { regex };
+        let token =
+            Token::Substitution(Substitution { replacement, flags, pattern });
+        Ok(Spanned { data: token, span: Span { start, end: self.position } })
+    }
 
-pub fn lex_punctuation_token(input: &str) -> IResult<&str, Punctuation> {
-    let parser = alt((
-        value(Punctuation::OpenParen, char('(')),
-        value(Punctuation::CloseParen, char(')')),
-    ));
-    wrap_token_lexing(parser).parse(input)
-}
+    fn lex_pattern_range(
+        &mut self,
+        subs_start: usize,
+    ) -> Result<Span, LexError> {
+        let start = self.position;
+        let mut end = start;
+        loop {
+            let Some(ch) = self.current else {
+                Err(LexError::PrematureSubsEnd(Span {
+                    start: subs_start,
+                    end: self.position,
+                }))?
+            };
 
-pub fn lex_operator_token(input: &str) -> IResult<&str, Operator> {
-    let parser =
-        take_while1(|ch: char| "&|!;".contains(ch)).map_opt(|tag: &str| {
-            Some(match tag {
-                ";" => Operator::Semicolon,
-                "|" => Operator::Pipe,
-                "&" => Operator::Ampersand,
-                "!" => Operator::Bang,
-                _ => None?,
+            self.advance();
+
+            if ch == '\\' {
+                if self.advance().is_none() {
+                    Err(LexError::PrematureSubsEnd(Span {
+                        start: subs_start,
+                        end: self.position,
+                    }))?
+                }
+            } else if ch == '/' {
+                break;
+            }
+            end = self.position;
+        }
+
+        Ok(Span { start, end })
+    }
+
+    fn lex_replacement(
+        &mut self,
+        subs_start: usize,
+    ) -> Result<Replacement, LexError> {
+        let mut fragments = Vec::new();
+        let mut text_start = self.position;
+
+        loop {
+            let Some(ch) = self.current else { break };
+            if ch == '\\' {
+                let text_end = self.position;
+                self.advance();
+                let Some(ch) = self.current else {
+                    Err(LexError::PrematureSubsEnd(Span {
+                        start: subs_start,
+                        end: self.position,
+                    }))?
+                };
+                let mut next_fragment = None;
+                if ch.is_digit(10) {
+                    next_fragment = Some(self.lex_number_fragment()?);
+                } else if ch == '{' {
+                    next_fragment = Some(self.lex_curly_fragment(subs_start)?);
+                }
+                if let Some(fragment) = next_fragment {
+                    if text_start != text_end {
+                        fragments.push(Fragment::Text(
+                            self.full_input[text_start .. text_end].to_owned(),
+                        ));
+                    }
+                    text_start = self.position;
+                    fragments.push(fragment);
+                }
+            } else if ch == '/' {
+                break;
+            } else {
+                self.advance();
+            }
+        }
+
+        if text_start != self.position {
+            fragments.push(Fragment::Text(
+                self.full_input[text_start .. self.position].to_owned(),
+            ));
+        }
+
+        Ok(Replacement { fragments })
+    }
+
+    fn lex_number_fragment(&mut self) -> Result<Fragment, LexError> {
+        let start = self.position;
+        loop {
+            let Some(ch) = self.current else { break };
+            if ch.is_digit(10) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        self.full_input[start .. self.position]
+            .parse()
+            .map(Fragment::RefInt)
+            .map_err(|source| {
+                LexError::ParseRefInt(
+                    source,
+                    Span { start, end: self.position },
+                )
             })
+    }
+
+    fn lex_curly_fragment(
+        &mut self,
+        subs_start: usize,
+    ) -> Result<Fragment, LexError> {
+        self.advance();
+        let start = self.position;
+        let Some(ch) = self.current else {
+            Err(LexError::PrematureSubsEnd(Span {
+                start: subs_start,
+                end: self.position,
+            }))?
+        };
+        if ch.is_digit(10) {
+            let mut end;
+            loop {
+                let Some(ch) = self.current else {
+                    Err(LexError::PrematureSubsEnd(Span {
+                        start: subs_start,
+                        end: self.position,
+                    }))?
+                };
+                end = self.position;
+                self.advance();
+                if ch == '}' {
+                    break;
+                }
+            }
+
+            self.full_input[start .. end].parse().map(Fragment::RefInt).map_err(
+                |source| LexError::ParseRefInt(source, Span { start, end }),
+            )
+        } else if ch.is_alphabetic() {
+            let mut end;
+            loop {
+                let Some(ch) = self.current else {
+                    Err(LexError::PrematureSubsEnd(Span {
+                        start: subs_start,
+                        end: self.position,
+                    }))?
+                };
+                end = self.position;
+                self.advance();
+                if ch == '}' {
+                    break;
+                }
+                if !ch.is_alphanumeric() && ch != '_' {
+                    Err(LexError::InvalidRefNameTail(end))?
+                }
+            }
+
+            self.full_input[start .. end].parse().map(Fragment::RefInt).map_err(
+                |source| LexError::ParseRefInt(source, Span { start, end }),
+            )
+        } else {
+            Err(LexError::InvalidRefStart(start))?
+        }
+    }
+
+    fn lex_flags(&mut self) -> Result<Flags, LexError> {
+        let mut flags = Flags::default();
+        if self.current == Some('/') {
+            self.advance();
+            loop {
+                let Some(ch) = self.current else { break };
+                if !ch.is_alphanumeric() {
+                    break;
+                }
+                let flag = match ch {
+                    'g' => Flag::Global,
+                    'i' => Flag::Insensitive,
+                    'm' => Flag::Multiline,
+                    'u' => Flag::Unicode,
+                    's' => Flag::DotNewline,
+                    'r' => Flag::Crlf,
+                    'G' => Flag::SwapGreed,
+                    'S' => Flag::IgnoreWhitespace,
+                    _ => Err(LexError::InvalidFlag(self.position))?,
+                };
+                flags.set(flag);
+                self.advance();
+            }
+        }
+        Ok(flags)
+    }
+
+    fn lex_operator(&mut self) -> Result<Spanned<Token>, LexError> {
+        let start = self.position;
+        self.advance();
+        let mut end = self.position;
+        while self.current.is_some_and(|ch| self.is_operator(ch)) {
+            self.advance();
+            end = self.position;
+        }
+        let token = Token::Operator(match &self.full_input[start .. end] {
+            ";" => Operator::Binary(BinaryOperator::Semicolon),
+            "|" => Operator::Binary(BinaryOperator::Pipe),
+            "&" => Operator::Binary(BinaryOperator::Ampersand),
+            "!" => Operator::Prefix(PrefixOperator::Bang),
+            _ => Err(LexError::InvalidOperator(Span { start, end }))?,
         });
-    wrap_token_lexing(parser).parse(input)
+        Ok(Spanned { data: token, span: Span { start, end } })
+    }
+
+    fn lex_punct(&mut self) -> Result<Spanned<Token>, LexError> {
+        let start = self.position;
+        self.advance();
+        let end = self.position;
+        let token = Token::Punct(match &self.full_input[start .. end] {
+            "(" => Punctuation::OpenParen,
+            ")" => Punctuation::CloseParen,
+            _ => Err(LexError::InvalidPunct(start))?,
+        });
+        Ok(Spanned { data: token, span: Span { start, end } })
+    }
 }
 
-pub fn lex_token(input: &str) -> IResult<&str, Token> {
-    alt((
-        lex_substitution_token.map(Token::Substitution),
-        lex_punctuation_token.map(Token::Punct),
-        lex_operator_token.map(Token::Operator),
-    ))
-    .parse(input)
-}
+impl<'input> Iterator for Lexer<'input> {
+    type Item = Result<Spanned<Token>, LexError>;
 
-#[cfg(test)]
-mod test {
-    use nom::Parser;
-
-    use crate::{
-        lexer::lex_operator_token,
-        subs::{Flag, Flags, Fragment, Replacement},
-        token::{Operator, Punctuation},
-    };
-
-    use super::{
-        lex_pattern_str,
-        lex_punctuation_token,
-        lex_replacement,
-        lex_substitution_token,
-    };
-
-    #[test]
-    fn test_lex_pattern_simple() {
-        lex_pattern_str("abc").unwrap();
-    }
-
-    #[test]
-    fn test_lex_replacement_simple() {
-        lex_replacement("def").unwrap();
-    }
-
-    #[test]
-    fn test_lex_flags_simple() {
-        lex_replacement("gm").unwrap();
-    }
-
-    #[test]
-    fn test_lex_substitution_without_flags() {
-        let (input, subs) = lex_substitution_token("s/abc/def").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_without_flags_trailing_slash() {
-        let (input, subs) = lex_substitution_token("s/abc/def/").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_without_flags_replacement_empty() {
-        let (input, subs) = lex_substitution_token("s/abc/").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(subs.replacement, Replacement { fragments: Vec::new() });
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_without_flags_trailing_slash_repl_empty() {
-        let (input, subs) = lex_substitution_token("s/abc//").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(subs.replacement, Replacement { fragments: Vec::new() });
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_flags() {
-        let (input, subs) = lex_substitution_token("s/abc/def/gm").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(
-            subs.flags,
-            Flags::default().with(Flag::Global).with(Flag::Multiline),
-        );
-    }
-
-    #[test]
-    fn test_lex_substitution_invalid_trailing_flags() {
-        lex_substitution_token("s/abc/def/gA").unwrap_err();
-    }
-
-    #[test]
-    fn test_lex_substitution_two_valid() {
-        let (input_0, subs_0) =
-            lex_substitution_token.parse("s/abc/def/g s/123/456/").unwrap();
-        let (input_1, subs_1) = lex_substitution_token.parse(input_0).unwrap();
-        assert_eq!(input_1, "");
-        assert_eq!(
-            subs_0.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(subs_0.flags, Flags::default().with(Flag::Global),);
-        assert_eq!(
-            subs_1.replacement,
-            Replacement { fragments: vec![Fragment::Text("456".to_owned()),] }
-        );
-        assert_eq!(subs_1.flags, Flags::default(),);
-    }
-
-    #[test]
-    fn test_lex_substitution_with_pattern_escapes() {
-        let (input, subs) = lex_substitution_token("s/a\\/bc/def").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_pattern_escapes_escaper() {
-        let (input, subs) = lex_substitution_token("s/a\\\\bc/def").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement { fragments: vec![Fragment::Text("def".to_owned()),] }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_replacement_fragment_number() {
-        let (input, subs) = lex_substitution_token("s/abc/d\\13ef").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement {
-                fragments: vec![
-                    Fragment::Text("d".to_owned()),
-                    Fragment::RefInt(13),
-                    Fragment::Text("ef".to_owned()),
-                ]
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let ch = self.current?;
+            if ch.is_whitespace() {
+                self.advance();
+                continue;
             }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_replacement_fragment_number_curly() {
-        let (input, subs) = lex_substitution_token("s/abc/d\\{13}2ef").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement {
-                fragments: vec![
-                    Fragment::Text("d".to_owned()),
-                    Fragment::RefInt(13),
-                    Fragment::Text("2ef".to_owned()),
-                ]
+            if self.starts_subs(ch) {
+                break Some(self.lex_subs(ch));
             }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_replacement_fragment_name() {
-        let (input, subs) =
-            lex_substitution_token("s/abc/d\\{foo}2ef").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement {
-                fragments: vec![
-                    Fragment::Text("d".to_owned()),
-                    Fragment::RefName("foo".to_owned()),
-                    Fragment::Text("2ef".to_owned()),
-                ]
+            if self.is_operator(ch) {
+                break Some(self.lex_operator());
             }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_with_replacement_fragments() {
-        let (input, subs) =
-            lex_substitution_token("s/abc/d\\{foo}2ef\\30.\\{31}3\\\\")
-                .unwrap();
-        assert_eq!(input, "");
-        assert_eq!(
-            subs.replacement,
-            Replacement {
-                fragments: vec![
-                    Fragment::Text("d".to_owned()),
-                    Fragment::RefName("foo".to_owned()),
-                    Fragment::Text("2ef".to_owned()),
-                    Fragment::RefInt(30),
-                    Fragment::Text(".".to_owned()),
-                    Fragment::RefInt(31),
-                    Fragment::Text("3".to_owned()),
-                    Fragment::Text("\\".to_owned()),
-                ]
+            if self.is_punct(ch) {
+                break Some(self.lex_punct());
             }
-        );
-        assert_eq!(subs.flags, Flags::default());
-    }
-
-    #[test]
-    fn test_lex_substitution_correct_regex() {
-        let (input, subs) = lex_substitution_token("s/abc\\/*\\\\3//").unwrap();
-        assert_eq!(input, "");
-        assert_eq!(subs.replacement, Replacement { fragments: Vec::new() });
-        assert_eq!(subs.flags, Flags::default());
-
-        assert!(subs.pattern.regex.is_match("abc\\3"));
-        assert!(subs.pattern.regex.is_match("abc/\\3"));
-        assert!(subs.pattern.regex.is_match("abc//\\3"));
-        assert!(!subs.pattern.regex.is_match("abc//3"));
-        assert!(!subs.pattern.regex.is_match("abc/3"));
-        assert!(!subs.pattern.regex.is_match("xyz"));
-    }
-
-    #[test]
-    fn test_lex_punctuation() {
-        let (input, punct) = lex_punctuation_token("( )").unwrap();
-        assert_eq!(punct, Punctuation::OpenParen);
-        let (_, punct) = lex_punctuation_token(input).unwrap();
-        assert_eq!(punct, Punctuation::CloseParen);
-    }
-
-    #[test]
-    fn test_lex_operator() {
-        let (input, operator) = lex_operator_token("; | & !").unwrap();
-        assert_eq!(operator, Operator::Semicolon);
-        let (input, operator) = lex_operator_token(input).unwrap();
-        assert_eq!(operator, Operator::Pipe);
-        let (input, operator) = lex_operator_token(input).unwrap();
-        assert_eq!(operator, Operator::Ampersand);
-        let (_, operator) = lex_operator_token(input).unwrap();
-        assert_eq!(operator, Operator::Bang);
+            let error = LexError::InvalidChar(self.position);
+            self.advance();
+            break Some(Err(error));
+        }
     }
 }
