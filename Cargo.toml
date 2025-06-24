@@ -5,7 +5,3 @@ edition = "2024"
 
 [dependencies]
 regex = "1.11.1"
-lalrpop-util = { version = "0.22.1", features = ["lexer", "unicode"] }
-
-[build-dependencies]
-lalrpop = "0.22.1"
