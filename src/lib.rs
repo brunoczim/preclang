@@ -1,10 +1,12 @@
 #[macro_use]
 mod macros;
 
-pub mod parser;
 pub mod location;
+pub mod error;
 pub mod subs;
 pub mod token;
 pub mod lexer;
 pub mod ast;
-pub mod interpreter;
+pub mod parser;
+pub mod eval;
+pub mod recipes;

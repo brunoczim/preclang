@@ -6,6 +6,12 @@ pub struct Span {
     pub end: Location,
 }
 
+impl Span {
+    pub fn unitary(start: Location) -> Self {
+        Self { start, end: start + 1 }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Spanned<T> {
     pub data: T,

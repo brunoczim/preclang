@@ -1,25 +1,54 @@
 use std::{num::ParseIntError, str::Chars};
 
 use regex::RegexBuilder;
+use thiserror::Error;
 
 use crate::{
+    error::LangError,
     location::{Location, Span, Spanned},
     subs::{Flag, Flags, Fragment, Pattern, Replacement, Substitution},
     token::{BinaryOperator, Operator, PrefixOperator, Punctuation, Token},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum LexError {
+    #[error("premature substitution end")]
     PrematureSubsEnd(Span),
+    #[error("invalid number reference")]
     InvalidRefInt(Span),
-    InvalidRefStart(Location),
+    #[error("invalid name reference start")]
+    InvalidRefNameStart(Location),
+    #[error("invalid name reference tail")]
     InvalidRefNameTail(Location),
+    #[error("failed to parse number reference, {0}")]
     ParseRefInt(ParseIntError, Span),
+    #[error("failed to parse regular expression, {0}")]
     Regex(regex::Error, Span),
+    #[error("invalid regular expression flag")]
     InvalidFlag(Location),
+    #[error("invalid operator")]
     InvalidOperator(Span),
+    #[error("invalid punctuation")]
     InvalidPunct(Location),
+    #[error("invalid character")]
     InvalidChar(Location),
+}
+
+impl LangError for LexError {
+    fn span(&self) -> Span {
+        match self {
+            Self::PrematureSubsEnd(span) => *span,
+            Self::InvalidRefInt(span) => *span,
+            Self::InvalidRefNameStart(start) => Span::unitary(*start),
+            Self::InvalidRefNameTail(start) => Span::unitary(*start),
+            Self::ParseRefInt(_, span) => *span,
+            Self::Regex(_, span) => *span,
+            Self::InvalidFlag(start) => Span::unitary(*start),
+            Self::InvalidOperator(span) => *span,
+            Self::InvalidPunct(start) => Span::unitary(*start),
+            Self::InvalidChar(start) => Span::unitary(*start),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -254,7 +283,7 @@ impl<'input> Lexer<'input> {
                 |source| LexError::ParseRefInt(source, Span { start, end }),
             )
         } else {
-            Err(LexError::InvalidRefStart(start))?
+            Err(LexError::InvalidRefNameStart(start))?
         }
     }
 

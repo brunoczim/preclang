@@ -1,7 +1,10 @@
 use std::mem;
 
+use thiserror::Error;
+
 use crate::{
     ast::Expr,
+    error::LangError,
     lexer::{LexError, Lexer},
     location::{Location, Span, Spanned},
     token::{BinaryOperator, Operator, PrefixOperator, Punctuation, Token},
@@ -21,17 +24,36 @@ fn pre_precedence(operator: PrefixOperator) -> i32 {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum ParseError {
+    #[error(transparent)]
     Lex(LexError),
-    Eof,
-    Nest(Location),
+    #[error("too much nesting")]
+    NestLimit(Location),
+    #[error("unmatched open parenthesis")]
     UnmatchedOpenParen(Span),
+    #[error("bad operand position")]
     BadOperand(Location),
+    #[error("bad operator position")]
     BadOperator(Location),
+    #[error("missing operand")]
     MissingOperand(Location),
+    #[error("missing operator")]
     MissingOperator(Location),
-    Internal(Location),
+}
+
+impl LangError for ParseError {
+    fn span(&self) -> Span {
+        match self {
+            Self::Lex(error) => error.span(),
+            Self::NestLimit(start) => Span::unitary(*start),
+            Self::UnmatchedOpenParen(span) => *span,
+            Self::BadOperand(start) => Span::unitary(*start),
+            Self::BadOperator(start) => Span::unitary(*start),
+            Self::MissingOperand(start) => Span::unitary(*start),
+            Self::MissingOperator(start) => Span::unitary(*start),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -73,10 +95,6 @@ impl<'a> Parser<'a> {
 
     pub fn parse(mut self) -> Result<Spanned<Expr>, Vec<ParseError>> {
         self.parse_expr().map_err(|_| self.errors)
-    }
-
-    pub fn is_eof(&self) -> bool {
-        self.errors.iter().rev().any(|error| matches!(error, ParseError::Eof))
     }
 
     pub fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseFailed> {
@@ -126,7 +144,7 @@ impl<'a> Parser<'a> {
 
     fn enter(&mut self, open_paren: Span) -> Result<(), ParseFailed> {
         if self.limit <= self.expr_stacks.len() {
-            self.errors.push(ParseError::Nest(self.location));
+            self.errors.push(ParseError::NestLimit(self.location));
             Err(ParseFailed)?
         }
         self.expr_stacks.push(ExprFrame {
@@ -140,7 +158,7 @@ impl<'a> Parser<'a> {
         let finish_result = self.finish_expr();
         let Some(frame) = self.expr_stacks.pop() else {
             self.expr_stack = Vec::new();
-            self.errors.push(ParseError::Nest(self.location));
+            self.errors.push(ParseError::NestLimit(self.location));
             Err(ParseFailed)?
         };
         self.expr_stack = frame.stack;
