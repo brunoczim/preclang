@@ -7,8 +7,6 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("label {0} is invalid")]
-    InvalidLabel(Operand),
     #[error("failed to manipulate program")]
     Ir(
         #[source]
@@ -53,33 +51,24 @@ impl Machine {
         self.text
     }
 
-    pub fn jmp_absolute(&mut self, label: Operand) -> Result<(), Error> {
-        if label < 0 {
-            Err(Error::InvalidLabel(label))?
-        }
+    pub fn jmp_absolute(&mut self, label: Operand) {
         self.ip = label;
-        Ok(())
     }
 
-    pub fn jmp_relative(&mut self, label_offset: Operand) -> Result<(), Error> {
+    pub fn jmp_relative(&mut self, label_offset: Operand) {
         self.jmp_absolute(self.ip.wrapping_add(label_offset))
     }
 
-    pub fn jmp_if_zero(&mut self, label_offset: Operand) -> Result<(), Error> {
+    pub fn jmp_if_zero(&mut self, label_offset: Operand) {
         if !self.flag {
-            self.jmp_relative(label_offset)?;
+            self.jmp_relative(label_offset);
         }
-        Ok(())
     }
 
-    pub fn jmp_if_not_zero(
-        &mut self,
-        label_offset: Operand,
-    ) -> Result<(), Error> {
+    pub fn jmp_if_not_zero(&mut self, label_offset: Operand) {
         if self.flag {
-            self.jmp_relative(label_offset)?;
+            self.jmp_relative(label_offset);
         }
-        Ok(())
     }
 
     pub fn set_flag(&mut self, flag: bool) {
@@ -129,9 +118,9 @@ impl Machine {
         let (opcode, operand) = decode_instruction(instruction);
         match opcode {
             opcodes::NOP => (),
-            opcodes::JMP => self.jmp_relative(operand)?,
-            opcodes::JZ => self.jmp_if_zero(operand)?,
-            opcodes::JNZ => self.jmp_if_not_zero(operand)?,
+            opcodes::JMP => self.jmp_relative(operand),
+            opcodes::JZ => self.jmp_if_zero(operand),
+            opcodes::JNZ => self.jmp_if_not_zero(operand),
             opcodes::DUPF => self.dup_flag(),
             opcodes::DUPT => self.dup_text(),
             opcodes::POPF => self.pop_flag(),
