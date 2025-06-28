@@ -78,12 +78,47 @@ impl<'a> From<ResolvedDiagnostics<'a>> for ErrorKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum InterpreterArg {
+    Ast,
+    Bytecode,
+}
+
+impl From<InterpreterArg> for Interpreter {
+    fn from(value: InterpreterArg) -> Self {
+        match value {
+            InterpreterArg::Ast => Self::Ast,
+            InterpreterArg::Bytecode => Self::Bytecode,
+        }
+    }
+}
+
+/// Executes programs of the Pure Regular Expression Combinator Language
+/// (Preclang).
+///
+/// By default, source code is provided through a file, whose path is provided
+/// as a positional argument, and input text is provided through the standard
+/// input.
 #[derive(Debug, clap::Parser)]
 struct Cli {
-    #[clap(short, long)]
+    /// Inline source code.
+    ///
+    /// If provided, positional source code path will not be accepted.
+    /// Standard input will still be available to input text.
+    #[clap(short, long, value_name = "CODE")]
     program: Option<String>,
-    #[clap(conflicts_with = "program")]
+    /// Path to the file containing the source code.
+    ///
+    /// Accepted and required only if no other means of providing source code
+    /// is specified.
+    #[clap(conflicts_with = "program", value_name = "PROGRAM_PATH")]
     file_program: Option<PathBuf>,
+    /// Uses standard input to receive source code.
+    ///
+    /// If provided, neither positional source code path nor inline source code
+    /// will be accepted.
+    /// Standard input will not be available to input text and alternative
+    /// means must be used to provide it.
     #[clap(
         long,
         conflicts_with = "file_program",
@@ -92,12 +127,36 @@ struct Cli {
         requires = "file_input"
     )]
     stdin_program: bool,
-    #[clap(short, long)]
+    /// Inline input text.
+    ///
+    /// If provided, standard input will not be used to receive input text,
+    /// and path to file will also not be accepted as means to provide it.
+    #[clap(short, long, value_name = "INPUT")]
     input: Option<String>,
-    #[clap(short, long, conflicts_with = "input")]
+    /// Path to file containing input text.
+    ///
+    /// If provided, standard input will not be used to receive input text,
+    /// and the inline argument will also not be accepted as means to provide
+    /// it.
+    #[clap(short, long, value_name = "INPUT_PATH", conflicts_with = "input")]
     file_input: Option<PathBuf>,
-    #[clap(short = 'I', long, default_value = "ast")]
-    interpreter: Interpreter,
+    /// Which interpreter method to use.
+    ///
+    /// ast - interpret by directly walking through the AST.
+    ///
+    /// bytecode - interpret by first compiling the AST to bytecode and then
+    ///            executing the bytecode.
+    #[clap(
+        short = 'I',
+        long,
+        value_name = "INTERPRETER",
+        default_value = "ast"
+    )]
+    interpreter: InterpreterArg,
+    /// Emits textual representation of bytecode.
+    ///
+    /// If provided, input text will not be accepted and the programm will not
+    /// be  executed.
     #[clap(
         short = 'S',
         long,
@@ -106,6 +165,12 @@ struct Cli {
         conflicts_with = "interpreter"
     )]
     emit_asm: bool,
+    /// Expands substitution tokens in textual representation of byte.
+    ///
+    /// This requires assembly emission mode.
+    /// By default, emitting assembly will print numeric identifiers of
+    /// substitution; this option enables expanding it directly into
+    /// instructions instead.
     #[clap(short = 'x', long, requires = "emit_asm")]
     expand_subs: bool,
 }
@@ -135,8 +200,9 @@ fn try_main(cli: Cli) -> Result<(), Error> {
         };
 
         let input = input_source.read()?;
+        let interpreter = cli.interpreter.into();
 
-        recipes::run(&program[..], &input[..], usize::MAX, cli.interpreter)
+        recipes::run(&program[..], &input[..], usize::MAX, interpreter)
     };
 
     let output = result

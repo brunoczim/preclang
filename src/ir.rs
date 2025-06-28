@@ -196,6 +196,18 @@ impl Program {
         })
     }
 
+    pub fn instructions(&self) -> impl Iterator<Item = (Operand, Instruction)> {
+        self.instructions
+            .iter()
+            .zip(0 ..)
+            .map(|(instruction, i)| (i, *instruction))
+    }
+    pub fn substitutions(
+        &self,
+    ) -> impl Iterator<Item = (Operand, &Substitution)> {
+        self.substitutions.iter().zip(0 ..).map(|(subs, i)| (i, subs))
+    }
+
     fn next_label(&self) -> Result<Operand, Error> {
         let last = self.past_last_label();
         if last < 0 {
@@ -213,9 +225,21 @@ pub struct Emit<'a> {
 
 impl<'a> fmt::Display for Emit<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.expand_subs {
+            let mut empty = true;
+            for (id, subs) in self.program.substitutions() {
+                write!(f, "#{id}:\n")?;
+                write!(f, "  {subs}\n")?;
+                empty = false;
+            }
+            if !empty {
+                write!(f, "\n")?;
+            }
+        }
+
         let mut labels = HashSet::new();
-        for (instruction, label) in self.program.instructions.iter().zip(0 ..) {
-            let (opcode, operand) = decode_instruction(*instruction);
+        for (label, instruction) in self.program.instructions() {
+            let (opcode, operand) = decode_instruction(instruction);
             let dest = match opcode {
                 opcodes::JMP | opcodes::JZ | opcodes::JNZ => {
                     label + 1 + operand
@@ -225,12 +249,12 @@ impl<'a> fmt::Display for Emit<'a> {
             labels.insert(dest);
         }
 
-        for (instruction, label) in self.program.instructions.iter().zip(0 ..) {
-            if labels.contains(&label) {
+        for (label, instruction) in self.program.instructions() {
+            if labels.contains(&label) || label == 0 {
                 write!(f, "L_{}:\n", label)?;
             }
             write!(f, "  ")?;
-            let (opcode, operand) = decode_instruction(*instruction);
+            let (opcode, operand) = decode_instruction(instruction);
             match opcode {
                 opcodes::NOP => write!(f, "nop")?,
                 opcodes::JMP => write!(f, "jmp  L_{}", label + 1 + operand)?,
