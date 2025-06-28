@@ -17,6 +17,8 @@ pub enum Error {
     ),
     #[error("opcode {0:8b} is invalid")]
     InvalidOpcode(Opcode),
+    #[error("interpretation cycle limit reached")]
+    CycleLimit,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +107,10 @@ impl Machine {
         self.flag = !self.flag;
     }
 
-    pub fn run_until_end(&mut self) -> Result<(), Error> {
-        while self.cycle()? {}
+    pub fn run_until_end(&mut self, mut limit: usize) -> Result<(), Error> {
+        while self.cycle()? {
+            limit = limit.checked_sub(1).ok_or_else(|| Error::CycleLimit)?;
+        }
         Ok(())
     }
 

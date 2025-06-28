@@ -53,7 +53,9 @@ pub fn run<'a>(
 ) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
     match interpreter {
         Interpreter::Ast => run_directly_on_ast(code, input, parse_nest_limit),
-        Interpreter::Bytecode => run_on_bytecode(code, input, parse_nest_limit),
+        Interpreter::Bytecode => {
+            run_on_bytecode(code, input, parse_nest_limit, usize::MAX)
+        },
     }
 }
 
@@ -77,6 +79,7 @@ pub fn run_on_bytecode<'a>(
     code: &'a str,
     input: &str,
     parse_nest_limit: usize,
+    interpret_limit: usize,
 ) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
     let resolver = Resolver::new(code);
     let lexer = Lexer::new(code);
@@ -89,7 +92,7 @@ pub fn run_on_bytecode<'a>(
     let program = compiler.compile(ast.data)?;
     let mut machine = Machine::new(program);
     machine.set_text(input);
-    machine.run_until_end()?;
+    machine.run_until_end(interpret_limit)?;
     let output = machine.into_text();
     Ok(Ok(output))
 }
