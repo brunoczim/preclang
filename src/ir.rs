@@ -1,3 +1,5 @@
+use std::fmt;
+
 use thiserror::Error;
 
 use crate::subs::Substitution;
@@ -200,6 +202,31 @@ impl Program {
             Err(Error::LabelsExhausted)?
         }
         Ok(last)
+    }
+}
+
+impl fmt::Display for Program {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (instruction, label) in self.instructions.iter().zip(0 ..) {
+            write!(f, "L_{}:\n", label)?;
+            write!(f, "  ")?;
+            let (opcode, operand) = decode_instruction(*instruction);
+            match opcode {
+                opcodes::NOP => write!(f, "nop")?,
+                opcodes::JMP => write!(f, "jmp  L_{}", label + 1 + operand)?,
+                opcodes::JZ => write!(f, "jz   L_{}", label + 1 + operand)?,
+                opcodes::JNZ => write!(f, "jnz  L_{}", label + 1 + operand)?,
+                opcodes::DUP => write!(f, "dup")?,
+                opcodes::POP => write!(f, "pop")?,
+                opcodes::SWAP => write!(f, "swap")?,
+                opcodes::SUBS => write!(f, "subs #{}", operand)?,
+                opcodes::NOT => write!(f, "not")?,
+                _ => write!(f, "??")?,
+            }
+            write!(f, "\n")?;
+        }
+        write!(f, "L_{}:\n", self.past_last_label())?;
+        Ok(())
     }
 }
 

@@ -69,7 +69,10 @@ impl Compiler {
                 self.compile_expr(operation.rhs.data)?;
                 self.program.push_encode(opcodes::SWAP, 0)?;
                 let jmp_dest_restore = self.program.past_last_label();
-                self.program.set_operand(jmp_src_restore, jmp_dest_restore)?;
+                self.program.set_operand(
+                    jmp_src_restore,
+                    jmp_dest_restore - jmp_src_restore - 1,
+                )?;
                 self.program.push_encode(opcodes::POP, 0)?;
             },
             BinaryOperator::Pipe => {
@@ -79,7 +82,10 @@ impl Compiler {
                     self.program.push_encode(opcodes::JNZ, 0)?;
                 self.compile_expr(operation.rhs.data)?;
                 let jmp_dest_restore = self.program.past_last_label();
-                self.program.set_operand(jmp_src_restore, jmp_dest_restore)?;
+                self.program.set_operand(
+                    jmp_src_restore,
+                    jmp_dest_restore - jmp_src_restore - 1,
+                )?;
                 self.program.push_encode(opcodes::SWAP, 0)?;
                 self.program.push_encode(opcodes::POP, 0)?;
             },

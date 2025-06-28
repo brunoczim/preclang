@@ -11,7 +11,7 @@ use std::{
 use clap::Parser;
 use preclang::{
     error::{Ice, ResolvedDiagnostics},
-    recipes,
+    recipes::{self, Interpreter, emit_asm},
 };
 use thiserror::Error;
 
@@ -78,12 +78,6 @@ impl<'a> From<ResolvedDiagnostics<'a>> for ErrorKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum Interpreter {
-    Ast,
-    Bytecode,
-}
-
 #[derive(Debug, clap::Parser)]
 struct Cli {
     #[clap(short, long)]
@@ -104,6 +98,14 @@ struct Cli {
     file_input: Option<PathBuf>,
     #[clap(short = 'I', long, default_value = "ast")]
     interpreter: Interpreter,
+    #[clap(
+        short = 'S',
+        long,
+        conflicts_with = "input",
+        conflicts_with = "file_input",
+        conflicts_with = "interpreter"
+    )]
+    emit_asm: bool,
 }
 
 fn try_main(cli: Cli) -> Result<(), Error> {
@@ -116,36 +118,33 @@ fn try_main(cli: Cli) -> Result<(), Error> {
         Source::Stdin
     };
 
-    let input_source = if let Some(input) = cli.input {
-        Source::Inline(input)
-    } else if let Some(input_path) = cli.file_input {
-        Source::File(input_path)
-    } else {
-        assert!(!cli.stdin_program);
-        Source::Stdin
-    };
-
     let program = program_source.read()?;
-    let input = input_source.read()?;
 
-    let output = match cli.interpreter {
-        Interpreter::Ast => {
-            recipes::run_directly_on_ast(&program[..], &input[..], usize::MAX)
-                .map_err(ErrorKind::from)
-                .map_err(|kind| Error { kind, source: program_source.clone() })?
-                .map_err(ErrorKind::from)
-                .map_err(|kind| Error { kind, source: program_source })?
-        },
+    let result = if cli.emit_asm {
+        emit_asm(&program, usize::MAX)
+    } else {
+        let input_source = if let Some(input) = cli.input {
+            Source::Inline(input)
+        } else if let Some(input_path) = cli.file_input {
+            Source::File(input_path)
+        } else {
+            assert!(!cli.stdin_program);
+            Source::Stdin
+        };
 
-        Interpreter::Bytecode => {
-            recipes::run_on_bytecode(&program[..], &input[..], usize::MAX)
-                .map_err(ErrorKind::from)
-                .map_err(|kind| Error { kind, source: program_source.clone() })?
-                .map_err(ErrorKind::from)
-                .map_err(|kind| Error { kind, source: program_source })?
-        },
+        let input = input_source.read()?;
+
+        recipes::run(&program[..], &input[..], usize::MAX, cli.interpreter)
     };
+
+    let output = result
+        .map_err(ErrorKind::from)
+        .map_err(|kind| Error { kind, source: program_source.clone() })?
+        .map_err(ErrorKind::from)
+        .map_err(|kind| Error { kind, source: program_source })?;
+
     print!("{output}");
+
     Ok(())
 }
 
