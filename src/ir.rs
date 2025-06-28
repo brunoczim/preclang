@@ -205,10 +205,16 @@ impl Program {
     }
 }
 
-impl fmt::Display for Program {
+#[derive(Debug, Clone, Copy)]
+pub struct Emit<'a> {
+    pub program: &'a Program,
+    pub expand_subs: bool,
+}
+
+impl<'a> fmt::Display for Emit<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut labels = HashSet::new();
-        for (instruction, label) in self.instructions.iter().zip(0 ..) {
+        for (instruction, label) in self.program.instructions.iter().zip(0 ..) {
             let (opcode, operand) = decode_instruction(*instruction);
             let dest = match opcode {
                 opcodes::JMP | opcodes::JZ | opcodes::JNZ => {
@@ -219,7 +225,7 @@ impl fmt::Display for Program {
             labels.insert(dest);
         }
 
-        for (instruction, label) in self.instructions.iter().zip(0 ..) {
+        for (instruction, label) in self.program.instructions.iter().zip(0 ..) {
             if labels.contains(&label) {
                 write!(f, "L_{}:\n", label)?;
             }
@@ -233,14 +239,23 @@ impl fmt::Display for Program {
                 opcodes::DUP => write!(f, "dup")?,
                 opcodes::POP => write!(f, "pop")?,
                 opcodes::SWAP => write!(f, "swap")?,
-                opcodes::SUBS => write!(f, "subs #{}", operand)?,
+                opcodes::SUBS => {
+                    if self.expand_subs {
+                        match self.program.get_substitution(operand) {
+                            Ok(subs) => write!(f, "subs {}", subs)?,
+                            Err(_) => write!(f, "subs ??")?,
+                        }
+                    } else {
+                        write!(f, "subs #{}", operand)?;
+                    }
+                },
                 opcodes::NOT => write!(f, "not")?,
                 _ => write!(f, "??")?,
             }
             write!(f, "\n")?;
         }
-        if labels.contains(&self.past_last_label()) {
-            write!(f, "L_{}:\n", self.past_last_label())?;
+        if labels.contains(&self.program.past_last_label()) {
+            write!(f, "L_{}:\n", self.program.past_last_label())?;
         }
         Ok(())
     }

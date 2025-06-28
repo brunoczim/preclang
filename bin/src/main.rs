@@ -106,6 +106,8 @@ struct Cli {
         conflicts_with = "interpreter"
     )]
     emit_asm: bool,
+    #[clap(short = 'x', long, requires = "emit_asm")]
+    expand_subs: bool,
 }
 
 fn try_main(cli: Cli) -> Result<(), Error> {
@@ -121,7 +123,7 @@ fn try_main(cli: Cli) -> Result<(), Error> {
     let program = program_source.read()?;
 
     let result = if cli.emit_asm {
-        emit_asm(&program, usize::MAX)
+        emit_asm(&program, usize::MAX, cli.expand_subs)
     } else {
         let input_source = if let Some(input) = cli.input {
             Source::Inline(input)

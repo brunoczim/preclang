@@ -6,6 +6,7 @@ use crate::{
     compiler::Compiler,
     error::{Ice, ResolvedDiagnostics, Resolver},
     eval::Evaluate,
+    ir,
     lexer::Lexer,
     parser::Parser,
     vm::Machine,
@@ -96,6 +97,7 @@ pub fn run_on_bytecode<'a>(
 pub fn emit_asm<'a>(
     code: &'a str,
     parse_nest_limit: usize,
+    expand_subs: bool,
 ) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
     let resolver = Resolver::new(code);
     let lexer = Lexer::new(code);
@@ -106,5 +108,6 @@ pub fn emit_asm<'a>(
     };
     let compiler = Compiler::new();
     let program = compiler.compile(ast.data)?;
-    Ok(Ok(program.to_string()))
+    let emissor = ir::Emit { expand_subs, program: &program };
+    Ok(Ok(emissor.to_string()))
 }
