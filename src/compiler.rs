@@ -64,30 +64,44 @@ impl Compiler {
             BinaryOperator::Ampersand => {
                 self.program.push_encode(opcodes::DUP, 0)?;
                 self.compile_expr(operation.lhs.data)?;
-                let jmp_src_restore =
+                let restore_lhs_fail_src =
                     self.program.push_encode(opcodes::JZ, 0)?;
                 self.compile_expr(operation.rhs.data)?;
+                let restore_rhs_fail_src =
+                    self.program.push_encode(opcodes::JZ, 0)?;
                 self.program.push_encode(opcodes::SWAP, 0)?;
-                let jmp_dest_restore = self.program.past_last_label();
+                let restore_fail_dest = self.program.past_last_label();
                 self.program.set_operand(
-                    jmp_src_restore,
-                    jmp_dest_restore - jmp_src_restore - 1,
+                    restore_lhs_fail_src,
+                    restore_fail_dest - restore_lhs_fail_src - 1,
+                )?;
+                self.program.set_operand(
+                    restore_rhs_fail_src,
+                    restore_fail_dest - restore_rhs_fail_src - 1,
                 )?;
                 self.program.push_encode(opcodes::POP, 0)?;
             },
             BinaryOperator::Pipe => {
                 self.program.push_encode(opcodes::DUP, 0)?;
                 self.compile_expr(operation.lhs.data)?;
-                let jmp_src_restore =
+                let jmp_src_restore_lhs =
                     self.program.push_encode(opcodes::JNZ, 0)?;
+                self.program.push_encode(opcodes::POP, 0)?;
                 self.compile_expr(operation.rhs.data)?;
-                let jmp_dest_restore = self.program.past_last_label();
+                let jmp_src_restore_rhs =
+                    self.program.push_encode(opcodes::JMP, 0)?;
+                let jmp_dest_restore_lhs = self.program.past_last_label();
                 self.program.set_operand(
-                    jmp_src_restore,
-                    jmp_dest_restore - jmp_src_restore - 1,
+                    jmp_src_restore_lhs,
+                    jmp_dest_restore_lhs - jmp_src_restore_lhs - 1,
                 )?;
                 self.program.push_encode(opcodes::SWAP, 0)?;
                 self.program.push_encode(opcodes::POP, 0)?;
+                let jmp_dest_restore_rhs = self.program.past_last_label();
+                self.program.set_operand(
+                    jmp_src_restore_rhs,
+                    jmp_dest_restore_rhs - jmp_src_restore_rhs - 1,
+                )?;
             },
         }
         Ok(())

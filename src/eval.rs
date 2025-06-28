@@ -125,6 +125,9 @@ impl Evaluate for BinaryOperation {
                 if flag {
                     (output, flag) = self.rhs.data.evaluate(&output);
                 }
+                if !flag {
+                    output = input.to_owned();
+                }
                 (output, flag)
             },
         }
