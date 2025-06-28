@@ -78,6 +78,12 @@ impl<'a> From<ResolvedDiagnostics<'a>> for ErrorKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum Interpreter {
+    Ast,
+    Bytecode,
+}
+
 #[derive(Debug, clap::Parser)]
 struct Cli {
     #[clap(short, long)]
@@ -96,6 +102,8 @@ struct Cli {
     input: Option<String>,
     #[clap(short, long, conflicts_with = "input")]
     file_input: Option<PathBuf>,
+    #[clap(short = 'I', long, default_value = "ast")]
+    interpreter: Interpreter,
 }
 
 fn try_main(cli: Cli) -> Result<(), Error> {
@@ -120,12 +128,23 @@ fn try_main(cli: Cli) -> Result<(), Error> {
     let program = program_source.read()?;
     let input = input_source.read()?;
 
-    let output =
-        recipes::run_directly_on_ast(&program[..], &input[..], usize::MAX)
-            .map_err(ErrorKind::from)
-            .map_err(|kind| Error { kind, source: program_source.clone() })?
-            .map_err(ErrorKind::from)
-            .map_err(|kind| Error { kind, source: program_source })?;
+    let output = match cli.interpreter {
+        Interpreter::Ast => {
+            recipes::run_directly_on_ast(&program[..], &input[..], usize::MAX)
+                .map_err(ErrorKind::from)
+                .map_err(|kind| Error { kind, source: program_source.clone() })?
+                .map_err(ErrorKind::from)
+                .map_err(|kind| Error { kind, source: program_source })?
+        },
+
+        Interpreter::Bytecode => {
+            recipes::run_on_bytecode(&program[..], &input[..], usize::MAX)
+                .map_err(ErrorKind::from)
+                .map_err(|kind| Error { kind, source: program_source.clone() })?
+                .map_err(ErrorKind::from)
+                .map_err(|kind| Error { kind, source: program_source })?
+        },
+    };
     print!("{output}");
     Ok(())
 }

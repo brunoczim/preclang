@@ -1,3 +1,5 @@
+use std::mem;
+
 use thiserror::Error;
 
 use crate::{
@@ -21,8 +23,7 @@ pub enum Error {
 pub struct Machine {
     program: Program,
     ip: Operand,
-    flag_stack: Vec<bool>,
-    text_stack: Vec<String>,
+    stack_tail: Vec<String>,
     flag: bool,
     text: String,
 }
@@ -32,8 +33,7 @@ impl Machine {
         Self {
             program,
             ip: 0,
-            flag_stack: Vec::new(),
-            text_stack: Vec::new(),
+            stack_tail: Vec::new(),
             flag: false,
             text: String::new(),
         }
@@ -79,23 +79,23 @@ impl Machine {
         self.flag
     }
 
-    pub fn dup_text(&mut self) {
-        self.text_stack.push(self.text.clone());
+    pub fn dup(&mut self) {
+        self.stack_tail.push(self.text.clone());
     }
 
-    pub fn dup_flag(&mut self) {
-        self.flag_stack.push(self.flag);
+    pub fn pop(&mut self) {
+        self.text = self.stack_tail.pop().unwrap_or_default();
     }
 
-    pub fn pop_text(&mut self) {
-        self.text = self.text_stack.pop().unwrap_or_default();
+    pub fn swap(&mut self) {
+        let prev_top = mem::replace(
+            &mut self.text,
+            self.stack_tail.pop().unwrap_or_default(),
+        );
+        self.stack_tail.push(prev_top);
     }
 
-    pub fn pop_flag(&mut self) {
-        self.flag = self.flag_stack.pop().unwrap_or_default();
-    }
-
-    pub fn subs(&mut self, id: Operand) -> Result<(), Error> {
+    pub fn substitution(&mut self, id: Operand) -> Result<(), Error> {
         let subs = self.program.get_substitution(id)?;
         (self.text, self.flag) = subs.evaluate(&self.text);
         Ok(())
@@ -121,11 +121,10 @@ impl Machine {
             opcodes::JMP => self.jmp_relative(operand),
             opcodes::JZ => self.jmp_if_zero(operand),
             opcodes::JNZ => self.jmp_if_not_zero(operand),
-            opcodes::DUPF => self.dup_flag(),
-            opcodes::DUPT => self.dup_text(),
-            opcodes::POPF => self.pop_flag(),
-            opcodes::POPT => self.pop_text(),
-            opcodes::SUBS => self.subs(operand)?,
+            opcodes::DUP => self.dup(),
+            opcodes::POP => self.pop(),
+            opcodes::SWAP => self.swap(),
+            opcodes::SUBS => self.substitution(operand)?,
             opcodes::NOT => self.not(),
             _ => Err(Error::InvalidOpcode(opcode))?,
         }

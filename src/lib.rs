@@ -11,5 +11,5 @@ pub mod parser;
 pub mod eval;
 pub mod ir;
 pub mod vm;
-//pub mod compiler;
+pub mod compiler;
 pub mod recipes;

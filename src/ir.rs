@@ -114,6 +114,10 @@ impl Program {
         self.substitutions.len()
     }
 
+    pub fn past_last_label(&self) -> Operand {
+        Operand::try_from(self.len()).unwrap_or(Operand::MIN)
+    }
+
     pub fn instruction(&self, label: Operand) -> Result<Instruction, Error> {
         self.instructions
             .get(label as usize)
@@ -122,12 +126,8 @@ impl Program {
     }
 
     pub fn push(&mut self, instruction: Instruction) -> Result<Operand, Error> {
-        let index = self.instructions.len();
-        let Ok(label) = Operand::try_from(index) else {
-            Err(Error::LabelsExhausted)?
-        };
+        let label = self.next_label()?;
         self.instructions.push(instruction);
-
         Ok(label)
     }
 
@@ -193,145 +193,34 @@ impl Program {
             count: self.substitution_count(),
         })
     }
+
+    fn next_label(&self) -> Result<Operand, Error> {
+        let last = self.past_last_label();
+        if last < 0 {
+            Err(Error::LabelsExhausted)?
+        }
+        Ok(last)
+    }
 }
 
 pub mod opcodes {
     use crate::ir::Opcode;
 
-    pub const NOP: Opcode = tags::set::CORE
-        | tags::operands::ONE
-        | tags::typ::FLOW
-        | tags::typ::flow::which::UNCONDITIONAL
-        | tags::typ::flow::direction::NOT;
+    pub const NOP: Opcode = 0;
 
-    pub const JMP: Opcode = tags::set::CORE
-        | tags::operands::ONE
-        | tags::typ::FLOW
-        | tags::typ::flow::which::UNCONDITIONAL
-        | tags::typ::flow::direction::POSITIVE;
+    pub const JMP: Opcode = 1;
 
-    pub const JZ: Opcode = tags::set::CORE
-        | tags::operands::ONE
-        | tags::typ::FLOW
-        | tags::typ::flow::which::ZERO
-        | tags::typ::flow::direction::POSITIVE;
+    pub const JZ: Opcode = 2;
 
-    pub const JNZ: Opcode = tags::set::CORE
-        | tags::operands::ONE
-        | tags::typ::FLOW
-        | tags::typ::flow::which::ZERO
-        | tags::typ::flow::direction::NOT;
+    pub const JNZ: Opcode = 3;
 
-    pub const DUPT: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::STACK
-        | tags::typ::stack::operation::DUP
-        | tags::typ::stack::which::TEXT;
+    pub const DUP: Opcode = 4;
 
-    pub const DUPF: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::STACK
-        | tags::typ::stack::operation::DUP
-        | tags::typ::stack::which::FLAG;
+    pub const POP: Opcode = 5;
 
-    pub const POPT: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::STACK
-        | tags::typ::stack::operation::POP
-        | tags::typ::stack::which::TEXT;
+    pub const SWAP: Opcode = 6;
 
-    pub const POPF: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::STACK
-        | tags::typ::stack::operation::POP
-        | tags::typ::stack::which::FLAG;
+    pub const SUBS: Opcode = 7;
 
-    pub const SUBS: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::EXPRESSION
-        | tags::typ::expression::SUBS;
-
-    pub const NOT: Opcode = tags::set::CORE
-        | tags::operands::NONE
-        | tags::typ::EXPRESSION
-        | tags::typ::expression::NOT;
-
-    pub mod tags {
-        use crate::ir::Opcode;
-
-        pub const SET: Opcode = 0b_1000_0000;
-        pub const OPERAND: Opcode = 0b_0100_0000;
-        pub const TYP: Opcode = 0b_0011_0000;
-
-        pub mod set {
-            use crate::ir::Opcode;
-
-            pub const CORE: Opcode = 0b_0000_0000;
-            pub const EXTENSION: Opcode = 0b_1000_0000;
-        }
-
-        pub mod operands {
-            use crate::ir::Opcode;
-
-            pub const ONE: Opcode = 0b_0000_0000;
-            pub const NONE: Opcode = 0b_0100_0000;
-        }
-
-        pub mod typ {
-            use crate::ir::Opcode;
-
-            pub const FLOW: Opcode = 0b_0000_0000;
-            pub const STACK: Opcode = 0b_0001_0000;
-            pub const EXPRESSION: Opcode = 0b_0010_0000;
-
-            pub mod flow {
-                use crate::ir::Opcode;
-
-                pub const WHICH: Opcode = 0b_0000_1100;
-                pub const DIRECTION: Opcode = 0b_0000_0011;
-
-                pub mod which {
-                    use crate::ir::Opcode;
-
-                    pub const UNCONDITIONAL: Opcode = 0b_0000_0000;
-                    pub const ZERO: Opcode = 0b_0000_0010;
-                }
-
-                pub mod direction {
-                    use crate::ir::Opcode;
-
-                    pub const NOT: Opcode = 0b_0000_0000;
-                    pub const POSITIVE: Opcode = 0b_0000_0001;
-                }
-            }
-
-            pub mod stack {
-                use crate::ir::Opcode;
-
-                pub const OPERATION: Opcode = 0b_0000_1100;
-                pub const WHICH: Opcode = 0b_0000_0011;
-
-                pub mod operation {
-                    use crate::ir::Opcode;
-
-                    pub const DUP: Opcode = 0b_0000_0000;
-                    pub const POP: Opcode = 0b_0000_0100;
-                }
-
-                pub mod which {
-                    use crate::ir::Opcode;
-
-                    pub const FLAG: Opcode = 0b_0000_0000;
-                    pub const TEXT: Opcode = 0b_0000_0001;
-                }
-            }
-
-            pub mod expression {
-                use crate::ir::Opcode;
-
-                pub const SUBS: Opcode = 0b_0010_0000;
-                pub const NOT: Opcode = 0b_0010_0001;
-            }
-        }
-    }
+    pub const NOT: Opcode = 8;
 }

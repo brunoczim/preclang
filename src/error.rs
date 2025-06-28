@@ -2,12 +2,20 @@ use std::fmt;
 
 use thiserror::Error;
 
-use crate::location::{Location, Span};
+use crate::{
+    compiler,
+    location::{Location, Span},
+    vm,
+};
 
 #[derive(Debug, Error)]
 pub enum Ice {
     #[error(transparent)]
     InvalidSpan(#[from] InvalidSpan),
+    #[error(transparent)]
+    Compile(#[from] compiler::Error),
+    #[error(transparent)]
+    Vm(#[from] vm::Error),
 }
 
 #[derive(Debug, Error)]
