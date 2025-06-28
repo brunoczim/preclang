@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use thiserror::Error;
 
@@ -207,8 +207,22 @@ impl Program {
 
 impl fmt::Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut labels = HashSet::new();
         for (instruction, label) in self.instructions.iter().zip(0 ..) {
-            write!(f, "L_{}:\n", label)?;
+            let (opcode, operand) = decode_instruction(*instruction);
+            let dest = match opcode {
+                opcodes::JMP | opcodes::JZ | opcodes::JNZ => {
+                    label + 1 + operand
+                },
+                _ => continue,
+            };
+            labels.insert(dest);
+        }
+
+        for (instruction, label) in self.instructions.iter().zip(0 ..) {
+            if labels.contains(&label) {
+                write!(f, "L_{}:\n", label)?;
+            }
             write!(f, "  ")?;
             let (opcode, operand) = decode_instruction(*instruction);
             match opcode {
@@ -225,7 +239,9 @@ impl fmt::Display for Program {
             }
             write!(f, "\n")?;
         }
-        write!(f, "L_{}:\n", self.past_last_label())?;
+        if labels.contains(&self.past_last_label()) {
+            write!(f, "L_{}:\n", self.past_last_label())?;
+        }
         Ok(())
     }
 }

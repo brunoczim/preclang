@@ -1,0 +1,1 @@
+s/ll/l/ ; s/nn/n/g & !(s/an/ã/g | s/in/ĩ/g | s/un/ũ/g)
