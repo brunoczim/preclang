@@ -33,7 +33,7 @@ impl fmt::Display for Source {
 }
 
 impl Source {
-    pub fn read(&self) -> Result<Cow<str>, Error> {
+    pub fn read<'a>(&'a self) -> Result<Cow<'a, str>, Error> {
         match self {
             Self::Inline(text) => Ok(Cow::Borrowed(&text[..])),
             Self::Stdin => {
