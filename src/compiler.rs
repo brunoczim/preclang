@@ -1,19 +1,19 @@
 use thiserror::Error;
 
 use crate::{
+    assembly::{self, Instruction, Line, Program},
     ast::{BinaryOperation, Expr, PrefixOperation},
-    ir::{self, Program, opcodes},
     subs::Substitution,
     token::{BinaryOperator, PrefixOperator},
 };
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("failed to manipulate intermediate representation")]
-    Ir(
+    #[error("failed to manipulate assembly representation")]
+    Asm(
         #[source]
         #[from]
-        ir::Error,
+        assembly::Error,
     ),
 }
 
@@ -47,8 +47,8 @@ impl Compiler {
     }
 
     fn compile_subs(&mut self, subs: Substitution) -> Result<(), Error> {
-        let subs_id = self.program.create_substitution(subs)?;
-        self.program.push_encode(opcodes::SUBS, subs_id)?;
+        let subs_id = self.program.create_substitution(subs);
+        self.program.create_line(Instruction::Subs(subs_id));
         Ok(())
     }
 
@@ -62,45 +62,48 @@ impl Compiler {
                 self.compile_expr(operation.rhs.data)?;
             },
             BinaryOperator::Ampersand => {
-                self.program.push_encode(opcodes::DUP, 0)?;
+                self.program.create_line(Instruction::Dup);
                 self.compile_expr(operation.lhs.data)?;
                 let restore_lhs_fail_src =
-                    self.program.push_encode(opcodes::JZ, 0)?;
+                    self.program.create_line(Line::Placeholder);
                 self.compile_expr(operation.rhs.data)?;
                 let restore_rhs_fail_src =
-                    self.program.push_encode(opcodes::JZ, 0)?;
-                self.program.push_encode(opcodes::SWAP, 0)?;
-                let restore_fail_dest = self.program.past_last_label();
-                self.program.set_operand(
+                    self.program.create_line(Line::Placeholder);
+                self.program.create_line(Instruction::Swap);
+                let restore_fail_dest =
+                    self.program.create_line(Line::Placeholder);
+                self.program.set_line(
                     restore_lhs_fail_src,
-                    restore_fail_dest - restore_lhs_fail_src - 1,
+                    Instruction::Jz(restore_fail_dest),
                 )?;
-                self.program.set_operand(
+                self.program.set_line(
                     restore_rhs_fail_src,
-                    restore_fail_dest - restore_rhs_fail_src - 1,
+                    Instruction::Jz(restore_fail_dest),
                 )?;
-                self.program.push_encode(opcodes::POP, 0)?;
+                self.program.create_line(Instruction::Pop);
             },
             BinaryOperator::Pipe => {
-                self.program.push_encode(opcodes::DUP, 0)?;
+                self.program.create_line(Instruction::Dup);
                 self.compile_expr(operation.lhs.data)?;
                 let jmp_src_restore_lhs =
-                    self.program.push_encode(opcodes::JNZ, 0)?;
-                self.program.push_encode(opcodes::POP, 0)?;
+                    self.program.create_line(Line::Placeholder);
+                self.program.create_line(Instruction::Pop);
                 self.compile_expr(operation.rhs.data)?;
                 let jmp_src_restore_rhs =
-                    self.program.push_encode(opcodes::JMP, 0)?;
-                let jmp_dest_restore_lhs = self.program.past_last_label();
-                self.program.set_operand(
+                    self.program.create_line(Line::Placeholder);
+                let jmp_dest_restore_lhs =
+                    self.program.create_line(Line::Placeholder);
+                self.program.set_line(
                     jmp_src_restore_lhs,
-                    jmp_dest_restore_lhs - jmp_src_restore_lhs - 1,
+                    Instruction::Jnz(jmp_dest_restore_lhs),
                 )?;
-                self.program.push_encode(opcodes::SWAP, 0)?;
-                self.program.push_encode(opcodes::POP, 0)?;
-                let jmp_dest_restore_rhs = self.program.past_last_label();
-                self.program.set_operand(
+                self.program.create_line(Instruction::Swap);
+                self.program.create_line(Instruction::Pop);
+                let jmp_dest_restore_rhs =
+                    self.program.create_line(Line::Placeholder);
+                self.program.set_line(
                     jmp_src_restore_rhs,
-                    jmp_dest_restore_rhs - jmp_src_restore_rhs - 1,
+                    Instruction::Jmp(jmp_dest_restore_rhs),
                 )?;
             },
         }
@@ -114,7 +117,7 @@ impl Compiler {
         match operation.operator.data {
             PrefixOperator::Bang => {
                 self.compile_expr(operation.operand.data)?;
-                self.program.push_encode(opcodes::NOT, 0)?;
+                self.program.create_line(Instruction::Not);
             },
         }
         Ok(())

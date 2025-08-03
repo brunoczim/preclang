@@ -12,3 +12,4 @@ edition = "2024"
 [dependencies]
 regex = "1.11.1"
 thiserror = { workspace = true }
+indexmap = "2.10.0"

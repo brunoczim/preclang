@@ -12,4 +12,6 @@ pub mod eval;
 pub mod ir;
 pub mod vm;
 pub mod compiler;
+pub mod assembly;
+pub mod assembler;
 pub mod recipes;

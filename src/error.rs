@@ -3,6 +3,7 @@ use std::fmt;
 use thiserror::Error;
 
 use crate::{
+    assembler,
     compiler,
     location::{Location, Span},
     vm,
@@ -14,6 +15,8 @@ pub enum Ice {
     InvalidSpan(#[from] InvalidSpan),
     #[error(transparent)]
     Compile(#[from] compiler::Error),
+    #[error(transparent)]
+    Assemble(#[from] assembler::Error),
     #[error(transparent)]
     Vm(#[from] vm::Error),
 }
