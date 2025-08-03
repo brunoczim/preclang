@@ -1,19 +1,19 @@
 use thiserror::Error;
 
 use crate::{
-    assembly::{self, Instruction, Line, Program},
     ast::{BinaryOperation, Expr, PrefixOperation},
+    ir::{self, Instruction, Line, Program},
     subs::Substitution,
     token::{BinaryOperator, PrefixOperator},
 };
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("failed to manipulate assembly representation")]
+    #[error("failed to manipulate assembly IR representation")]
     Asm(
         #[source]
         #[from]
-        assembly::Error,
+        ir::Error,
     ),
 }
 

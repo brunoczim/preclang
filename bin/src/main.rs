@@ -153,7 +153,7 @@ struct Cli {
         default_value = "ast"
     )]
     interpreter: InterpreterArg,
-    /// Emits textual representation of bytecode.
+    /// Emits textual, assembly-like representation of bytecode.
     ///
     /// If provided, input text will not be accepted and the programm will not
     /// be  executed.

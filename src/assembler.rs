@@ -2,27 +2,27 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::{assembly, bytecode};
+use crate::{bytecode, ir};
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to create substitution")]
     CreateSubs(#[source] bytecode::Error),
     #[error("failed to find substitution")]
-    GetSubs(#[source] assembly::Error),
+    GetSubs(#[source] ir::Error),
     #[error("failed to encode instruction")]
     EncodeInstr(#[source] bytecode::Error),
     #[error("failed to insert instruction")]
     PushInstr(#[source] bytecode::Error),
     #[error("failed to find label {0} in jump table")]
-    UnknownLabel(assembly::LabelId),
+    UnknownLabel(ir::LabelId),
     #[error("failed to set instruction operand")]
     SetOperand(#[source] bytecode::Error),
 }
 
 #[derive(Debug, Clone)]
 pub struct Assembler {
-    jmps: HashMap<assembly::LabelId, bytecode::Operand>,
+    jmps: HashMap<ir::LabelId, bytecode::Operand>,
     bytecode_prog: bytecode::Program,
 }
 
@@ -39,12 +39,12 @@ impl Assembler {
 
     pub fn assemble(
         mut self,
-        assembly: &assembly::Program,
+        ir: &ir::Program,
     ) -> Result<bytecode::Program, Error> {
-        for (label, line) in assembly.lines() {
-            self.line_first_pass(label, line, assembly)?;
+        for (label, line) in ir.lines() {
+            self.line_first_pass(label, line, ir)?;
         }
-        for (label, line) in assembly.lines() {
+        for (label, line) in ir.lines() {
             self.line_second_pass(label, line)?;
         }
         Ok(self.bytecode_prog)
@@ -52,21 +52,21 @@ impl Assembler {
 
     fn line_first_pass(
         &mut self,
-        label: assembly::LabelId,
-        line: assembly::Line,
-        assembly: &assembly::Program,
+        label: ir::LabelId,
+        line: ir::Line,
+        ir: &ir::Program,
     ) -> Result<(), Error> {
         let bytecode_label = match line {
-            assembly::Line::Placeholder => self.bytecode_prog.past_last_label(),
-            assembly::Line::Instruction(instr) => {
+            ir::Line::Placeholder => self.bytecode_prog.past_last_label(),
+            ir::Line::Instruction(instr) => {
                 let (opcode, operand) = match instr {
-                    assembly::Instruction::Nop => (bytecode::opcodes::NOP, 0),
-                    assembly::Instruction::Dup => (bytecode::opcodes::DUP, 0),
-                    assembly::Instruction::Pop => (bytecode::opcodes::POP, 0),
-                    assembly::Instruction::Not => (bytecode::opcodes::NOT, 0),
-                    assembly::Instruction::Swap => (bytecode::opcodes::SWAP, 0),
-                    assembly::Instruction::Subs(subs_id) => {
-                        let subs = assembly
+                    ir::Instruction::Nop => (bytecode::opcodes::NOP, 0),
+                    ir::Instruction::Dup => (bytecode::opcodes::DUP, 0),
+                    ir::Instruction::Pop => (bytecode::opcodes::POP, 0),
+                    ir::Instruction::Not => (bytecode::opcodes::NOT, 0),
+                    ir::Instruction::Swap => (bytecode::opcodes::SWAP, 0),
+                    ir::Instruction::Subs(subs_id) => {
+                        let subs = ir
                             .get_substitution(subs_id)
                             .map_err(Error::GetSubs)?;
                         let operand = self
@@ -75,13 +75,9 @@ impl Assembler {
                             .map_err(Error::CreateSubs)?;
                         (bytecode::opcodes::SUBS, operand)
                     },
-                    assembly::Instruction::Jmp(_) => {
-                        (bytecode::opcodes::JMP, 0)
-                    },
-                    assembly::Instruction::Jz(_) => (bytecode::opcodes::JZ, 0),
-                    assembly::Instruction::Jnz(_) => {
-                        (bytecode::opcodes::JNZ, 0)
-                    },
+                    ir::Instruction::Jmp(_) => (bytecode::opcodes::JMP, 0),
+                    ir::Instruction::Jz(_) => (bytecode::opcodes::JZ, 0),
+                    ir::Instruction::Jnz(_) => (bytecode::opcodes::JNZ, 0),
                 };
 
                 let encoded_instr =
@@ -100,15 +96,15 @@ impl Assembler {
 
     fn line_second_pass(
         &mut self,
-        label: assembly::LabelId,
-        line: assembly::Line,
+        label: ir::LabelId,
+        line: ir::Line,
     ) -> Result<(), Error> {
-        let assembly::Line::Instruction(instr) = line else { return Ok(()) };
+        let ir::Line::Instruction(instr) = line else { return Ok(()) };
 
         match instr {
-            assembly::Instruction::Jmp(dest)
-            | assembly::Instruction::Jz(dest)
-            | assembly::Instruction::Jnz(dest) => {
+            ir::Instruction::Jmp(dest)
+            | ir::Instruction::Jz(dest)
+            | ir::Instruction::Jnz(dest) => {
                 let bytecode_label = self
                     .jmps
                     .get(&label)

@@ -4,10 +4,10 @@ use thiserror::Error;
 
 use crate::{
     assembler::Assembler,
-    assembly,
     compiler::Compiler,
     error::{Ice, ResolvedDiagnostics, Resolver},
     eval::Evaluate,
+    ir,
     lexer::Lexer,
     parser::Parser,
     vm::Machine,
@@ -90,9 +90,9 @@ pub fn run_on_bytecode<'a>(
         Err(errors) => return Ok(Err(resolver.resolve_errors(errors)?)),
     };
     let compiler = Compiler::new();
-    let assembly_program = compiler.compile(ast.data)?;
+    let ir_program = compiler.compile(ast.data)?;
     let assembler = Assembler::new();
-    let program = assembler.assemble(&assembly_program)?;
+    let program = assembler.assemble(&ir_program)?;
     let mut machine = Machine::new(program);
     machine.set_text(input);
     machine.run_until_end(interpret_limit)?;
@@ -113,7 +113,7 @@ pub fn emit_asm<'a>(
         Err(errors) => return Ok(Err(resolver.resolve_errors(errors)?)),
     };
     let compiler = Compiler::new();
-    let assembly_program = compiler.compile(ast.data)?;
-    let emissor = assembly::Emit { expand_subs, program: &assembly_program };
+    let ir_program = compiler.compile(ast.data)?;
+    let emissor = ir::Emit { expand_subs, program: &ir_program };
     Ok(Ok(emissor.to_string()))
 }
