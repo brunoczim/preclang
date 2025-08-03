@@ -3,8 +3,8 @@ use std::mem;
 use thiserror::Error;
 
 use crate::{
+    bytecode::{self, Opcode, Operand, Program, decode_instruction, opcodes},
     eval::Evaluate,
-    ir::{self, Opcode, Operand, Program, decode_instruction, opcodes},
 };
 
 #[derive(Debug, Error)]
@@ -13,7 +13,7 @@ pub enum Error {
     Ir(
         #[source]
         #[from]
-        ir::Error,
+        bytecode::Error,
     ),
     #[error("opcode {0:8b} is invalid")]
     InvalidOpcode(Opcode),

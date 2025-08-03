@@ -9,7 +9,7 @@ pub mod lexer;
 pub mod ast;
 pub mod parser;
 pub mod eval;
-pub mod ir;
+pub mod bytecode;
 pub mod vm;
 pub mod compiler;
 pub mod assembly;

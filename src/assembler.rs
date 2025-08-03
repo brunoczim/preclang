@@ -2,28 +2,28 @@ use std::collections::HashMap;
 
 use thiserror::Error;
 
-use crate::{assembly, ir};
+use crate::{assembly, bytecode};
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to create substitution")]
-    CreateSubs(#[source] ir::Error),
+    CreateSubs(#[source] bytecode::Error),
     #[error("failed to find substitution")]
     GetSubs(#[source] assembly::Error),
     #[error("failed to encode instruction")]
-    EncodeInstr(#[source] ir::Error),
+    EncodeInstr(#[source] bytecode::Error),
     #[error("failed to insert instruction")]
-    PushInstr(#[source] ir::Error),
+    PushInstr(#[source] bytecode::Error),
     #[error("failed to find label {0} in jump table")]
     UnknownLabel(assembly::LabelId),
     #[error("failed to set instruction operand")]
-    SetOperand(#[source] ir::Error),
+    SetOperand(#[source] bytecode::Error),
 }
 
 #[derive(Debug, Clone)]
 pub struct Assembler {
-    jmps: HashMap<assembly::LabelId, ir::Operand>,
-    ir_prog: ir::Program,
+    jmps: HashMap<assembly::LabelId, bytecode::Operand>,
+    bytecode_prog: bytecode::Program,
 }
 
 impl Default for Assembler {
@@ -34,64 +34,71 @@ impl Default for Assembler {
 
 impl Assembler {
     pub fn new() -> Self {
-        Self { ir_prog: ir::Program::new(), jmps: HashMap::new() }
+        Self { bytecode_prog: bytecode::Program::new(), jmps: HashMap::new() }
     }
 
     pub fn assemble(
         mut self,
         assembly: &assembly::Program,
-    ) -> Result<ir::Program, Error> {
+    ) -> Result<bytecode::Program, Error> {
         for (label, line) in assembly.lines() {
-            self.instr_first_pass(label, line, assembly)?;
+            self.line_first_pass(label, line, assembly)?;
         }
         for (label, line) in assembly.lines() {
-            self.instr_second_pass(label, line)?;
+            self.line_second_pass(label, line)?;
         }
-        Ok(self.ir_prog)
+        Ok(self.bytecode_prog)
     }
 
-    fn instr_first_pass(
+    fn line_first_pass(
         &mut self,
         label: assembly::LabelId,
         line: assembly::Line,
         assembly: &assembly::Program,
     ) -> Result<(), Error> {
-        let ir_label = match line {
-            assembly::Line::Placeholder => self.ir_prog.past_last_label(),
+        let bytecode_label = match line {
+            assembly::Line::Placeholder => self.bytecode_prog.past_last_label(),
             assembly::Line::Instruction(instr) => {
                 let (opcode, operand) = match instr {
-                    assembly::Instruction::Nop => (ir::opcodes::NOP, 0),
-                    assembly::Instruction::Dup => (ir::opcodes::DUP, 0),
-                    assembly::Instruction::Pop => (ir::opcodes::POP, 0),
-                    assembly::Instruction::Not => (ir::opcodes::NOT, 0),
-                    assembly::Instruction::Swap => (ir::opcodes::SWAP, 0),
+                    assembly::Instruction::Nop => (bytecode::opcodes::NOP, 0),
+                    assembly::Instruction::Dup => (bytecode::opcodes::DUP, 0),
+                    assembly::Instruction::Pop => (bytecode::opcodes::POP, 0),
+                    assembly::Instruction::Not => (bytecode::opcodes::NOT, 0),
+                    assembly::Instruction::Swap => (bytecode::opcodes::SWAP, 0),
                     assembly::Instruction::Subs(subs_id) => {
                         let subs = assembly
                             .get_substitution(subs_id)
                             .map_err(Error::GetSubs)?;
                         let operand = self
-                            .ir_prog
+                            .bytecode_prog
                             .create_substitution(subs.clone())
                             .map_err(Error::CreateSubs)?;
-                        (ir::opcodes::SUBS, operand)
+                        (bytecode::opcodes::SUBS, operand)
                     },
-                    assembly::Instruction::Jmp(_) => (ir::opcodes::JMP, 0),
-                    assembly::Instruction::Jz(_) => (ir::opcodes::JZ, 0),
-                    assembly::Instruction::Jnz(_) => (ir::opcodes::JNZ, 0),
+                    assembly::Instruction::Jmp(_) => {
+                        (bytecode::opcodes::JMP, 0)
+                    },
+                    assembly::Instruction::Jz(_) => (bytecode::opcodes::JZ, 0),
+                    assembly::Instruction::Jnz(_) => {
+                        (bytecode::opcodes::JNZ, 0)
+                    },
                 };
 
-                let encoded_instr = ir::encode_instruction(opcode, operand)
-                    .map_err(Error::EncodeInstr)?;
-                self.ir_prog.push(encoded_instr).map_err(Error::PushInstr)?
+                let encoded_instr =
+                    bytecode::encode_instruction(opcode, operand)
+                        .map_err(Error::EncodeInstr)?;
+                self.bytecode_prog
+                    .push(encoded_instr)
+                    .map_err(Error::PushInstr)?
             },
         };
 
-        self.jmps.insert(label, ir_label);
+        self.jmps.insert(label, bytecode_label);
 
         Ok(())
     }
 
-    fn instr_second_pass(
+    fn line_second_pass(
         &mut self,
         label: assembly::LabelId,
         line: assembly::Line,
@@ -102,18 +109,21 @@ impl Assembler {
             assembly::Instruction::Jmp(dest)
             | assembly::Instruction::Jz(dest)
             | assembly::Instruction::Jnz(dest) => {
-                let ir_label = self
+                let bytecode_label = self
                     .jmps
                     .get(&label)
                     .copied()
                     .ok_or(Error::UnknownLabel(label))?;
-                let ir_dest = self
+                let bytecode_dest = self
                     .jmps
                     .get(&dest)
                     .copied()
                     .ok_or(Error::UnknownLabel(dest))?;
-                self.ir_prog
-                    .set_operand(ir_label, ir_dest - ir_label - 1)
+                self.bytecode_prog
+                    .set_operand(
+                        bytecode_label,
+                        bytecode_dest - bytecode_label - 1,
+                    )
                     .map_err(Error::SetOperand)?;
             },
             _ => (),

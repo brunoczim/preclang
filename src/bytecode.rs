@@ -286,7 +286,7 @@ impl<'a> fmt::Display for Emit<'a> {
 }
 
 pub mod opcodes {
-    use crate::ir::Opcode;
+    use crate::bytecode::Opcode;
 
     pub const NOP: Opcode = 0;
 
