@@ -1,0 +1,4 @@
+s/(bh|dh|gwh|gjh|gh|b|d|gw|gj|g|p|t|kw|kj|k|s|m|n|l|r|y|u|h1|h2|h3|H|m\.|n\.|l\.|r\.|i|u|ee|e|oo|o|aa|a)/:\1:/ ;
+s/:kj:/:k:/g ;
+s/:gj:/:g:/g ;
+s/:gjh:/:gh:/g

@@ -4,10 +4,10 @@ use thiserror::Error;
 
 use crate::{
     assembler::Assembler,
+    bytecode,
     compiler::Compiler,
     error::{Ice, ResolvedDiagnostics, Resolver},
     eval::Evaluate,
-    ir,
     lexer::Lexer,
     parser::Parser,
     vm::Machine,
@@ -114,6 +114,8 @@ pub fn emit_asm<'a>(
     };
     let compiler = Compiler::new();
     let ir_program = compiler.compile(ast.data)?;
-    let emissor = ir::Emit { expand_subs, program: &ir_program };
+    let assembler = Assembler::new();
+    let bytecode = assembler.assemble(&ir_program)?;
+    let emissor = bytecode::Emit { expand_subs, program: &bytecode };
     Ok(Ok(emissor.to_string()))
 }

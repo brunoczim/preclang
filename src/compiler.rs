@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::{
     ast::{BinaryOperation, Expr, PrefixOperation},
-    ir::{self, Instruction, Line, Program},
+    ir::{self, Block, BlockId, Instruction, Program},
     subs::Substitution,
     token::{BinaryOperator, PrefixOperator},
 };
@@ -20,6 +20,7 @@ pub enum Error {
 #[derive(Debug, Clone)]
 pub struct Compiler {
     program: Program,
+    curr_block: BlockId,
 }
 
 impl Default for Compiler {
@@ -30,12 +31,25 @@ impl Default for Compiler {
 
 impl Compiler {
     pub fn new() -> Self {
-        Self { program: Program::new() }
+        let mut program = Program::new();
+        let block = Block::new();
+        let curr_block = program.create_block(block);
+        Self { program, curr_block }
     }
 
     pub fn compile(mut self, expr: Expr) -> Result<Program, Error> {
         self.compile_expr(expr)?;
         Ok(self.program)
+    }
+
+    fn require_block(&mut self) -> Result<&mut Block, Error> {
+        let block = self.program.get_block_mut(self.curr_block)?;
+        Ok(block)
+    }
+
+    fn setup_block(&mut self, label: BlockId) {
+        self.program.setup_block(label, Block::new());
+        self.curr_block = label;
     }
 
     fn compile_expr(&mut self, expr: Expr) -> Result<(), Error> {
@@ -48,7 +62,7 @@ impl Compiler {
 
     fn compile_subs(&mut self, subs: Substitution) -> Result<(), Error> {
         let subs_id = self.program.create_substitution(subs);
-        self.program.create_line(Instruction::Subs(subs_id));
+        self.require_block()?.push(Instruction::Subs(subs_id));
         Ok(())
     }
 
@@ -62,49 +76,34 @@ impl Compiler {
                 self.compile_expr(operation.rhs.data)?;
             },
             BinaryOperator::Ampersand => {
-                self.program.create_line(Instruction::Dup);
+                let restore_label = self.program.reserve_block();
+
+                self.require_block()?.push(Instruction::Dup);
                 self.compile_expr(operation.lhs.data)?;
-                let restore_lhs_fail_src =
-                    self.program.create_line(Line::Placeholder);
+                self.require_block()?.push(Instruction::Jz(restore_label));
                 self.compile_expr(operation.rhs.data)?;
-                let restore_rhs_fail_src =
-                    self.program.create_line(Line::Placeholder);
-                self.program.create_line(Instruction::Swap);
-                let restore_fail_dest =
-                    self.program.create_line(Line::Placeholder);
-                self.program.set_line(
-                    restore_lhs_fail_src,
-                    Instruction::Jz(restore_fail_dest),
-                )?;
-                self.program.set_line(
-                    restore_rhs_fail_src,
-                    Instruction::Jz(restore_fail_dest),
-                )?;
-                self.program.create_line(Instruction::Pop);
+                self.require_block()?.push(Instruction::Jz(restore_label));
+                self.require_block()?.push(Instruction::Swap);
+
+                self.setup_block(restore_label);
+                self.require_block()?.push(Instruction::Pop);
             },
             BinaryOperator::Pipe => {
-                self.program.create_line(Instruction::Dup);
+                let lhs_restore_label = self.program.reserve_block();
+                let rhs_restore_label = self.program.reserve_block();
+
+                self.require_block()?.push(Instruction::Dup);
                 self.compile_expr(operation.lhs.data)?;
-                let jmp_src_restore_lhs =
-                    self.program.create_line(Line::Placeholder);
-                self.program.create_line(Instruction::Pop);
+                self.require_block()?.push(Instruction::Jnz(lhs_restore_label));
+                self.require_block()?.push(Instruction::Pop);
                 self.compile_expr(operation.rhs.data)?;
-                let jmp_src_restore_rhs =
-                    self.program.create_line(Line::Placeholder);
-                let jmp_dest_restore_lhs =
-                    self.program.create_line(Line::Placeholder);
-                self.program.set_line(
-                    jmp_src_restore_lhs,
-                    Instruction::Jnz(jmp_dest_restore_lhs),
-                )?;
-                self.program.create_line(Instruction::Swap);
-                self.program.create_line(Instruction::Pop);
-                let jmp_dest_restore_rhs =
-                    self.program.create_line(Line::Placeholder);
-                self.program.set_line(
-                    jmp_src_restore_rhs,
-                    Instruction::Jmp(jmp_dest_restore_rhs),
-                )?;
+                self.require_block()?.push(Instruction::Jmp(rhs_restore_label));
+
+                self.setup_block(lhs_restore_label);
+                self.require_block()?.push(Instruction::Swap);
+                self.require_block()?.push(Instruction::Pop);
+
+                self.setup_block(rhs_restore_label);
             },
         }
         Ok(())
@@ -117,7 +116,7 @@ impl Compiler {
         match operation.operator.data {
             PrefixOperator::Bang => {
                 self.compile_expr(operation.operand.data)?;
-                self.program.create_line(Instruction::Not);
+                self.require_block()?.push(Instruction::Not);
             },
         }
         Ok(())
