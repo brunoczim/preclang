@@ -22,6 +22,22 @@ impl<T> Spanned<T> {
     pub fn anywhere(data: T) -> Self {
         Self { data, span: Span { start: 0, end: 0 } }
     }
+
+    pub fn as_ref(&self) -> Spanned<&T> {
+        Spanned { data: &self.data, span: self.span }
+    }
+}
+
+impl<'a, T> Spanned<&'a T>
+where
+    T: ?Sized,
+{
+    pub fn cloned(self) -> Spanned<T>
+    where
+        T: Clone,
+    {
+        Spanned { data: self.data.clone(), span: self.span }
+    }
 }
 
 pub trait SpanlessEq: Eq {

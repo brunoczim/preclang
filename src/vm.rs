@@ -2,9 +2,13 @@ use std::mem;
 
 use thiserror::Error;
 
-use crate::{
-    bytecode::{self, Opcode, Operand, Program, decode_instruction, opcodes},
-    eval::Evaluate,
+use crate::bytecode::{
+    self,
+    Opcode,
+    Operand,
+    Program,
+    decode_instruction,
+    opcodes,
 };
 
 #[derive(Debug, Error)]
@@ -19,6 +23,8 @@ pub enum Error {
     InvalidOpcode(Opcode),
     #[error("interpretation cycle limit reached")]
     CycleLimit,
+    #[error("stack overflow")]
+    StackOverflow,
 }
 
 #[derive(Debug, Clone)]
@@ -28,16 +34,20 @@ pub struct Machine {
     stack_tail: Vec<String>,
     flag: bool,
     text: String,
+    call_stack: Vec<Operand>,
+    call_stack_limit: usize,
 }
 
 impl Machine {
-    pub fn new(program: Program) -> Self {
+    pub fn new(program: Program, call_stack_limit: usize) -> Self {
         Self {
             program,
             ip: 0,
             stack_tail: Vec::new(),
             flag: false,
             text: String::new(),
+            call_stack: Vec::new(),
+            call_stack_limit,
         }
     }
 
@@ -99,12 +109,30 @@ impl Machine {
 
     pub fn substitution(&mut self, id: Operand) -> Result<(), Error> {
         let subs = self.program.get_substitution(id)?;
-        (self.text, self.flag) = subs.evaluate(&self.text);
+        (self.text, self.flag) = subs.evaluate_raw(&self.text);
         Ok(())
     }
 
     pub fn not(&mut self) {
         self.flag = !self.flag;
+    }
+
+    pub fn call_relative(
+        &mut self,
+        label_offset: Operand,
+    ) -> Result<(), Error> {
+        if self.call_stack.len() + 1 >= self.call_stack_limit {
+            Err(Error::StackOverflow)?
+        }
+        self.call_stack.push(self.ip);
+        self.jmp_relative(label_offset);
+        Ok(())
+    }
+
+    pub fn ret(&mut self) {
+        if let Some(label) = self.call_stack.pop() {
+            self.jmp_absolute(label);
+        }
     }
 
     pub fn run_until_end(&mut self, mut limit: usize) -> Result<(), Error> {
@@ -130,6 +158,8 @@ impl Machine {
             opcodes::SWAP => self.swap(),
             opcodes::SUBS => self.substitution(operand)?,
             opcodes::NOT => self.not(),
+            opcodes::CALL => self.call_relative(operand)?,
+            opcodes::RET => self.ret(),
             _ => Err(Error::InvalidOpcode(opcode))?,
         }
         Ok(true)

@@ -78,6 +78,8 @@ impl Assembler {
                 ir::Instruction::Jmp(_) => (bytecode::opcodes::JMP, 0),
                 ir::Instruction::Jz(_) => (bytecode::opcodes::JZ, 0),
                 ir::Instruction::Jnz(_) => (bytecode::opcodes::JNZ, 0),
+                ir::Instruction::Call(_) => (bytecode::opcodes::CALL, 0),
+                ir::Instruction::Ret => (bytecode::opcodes::RET, 0),
             };
 
             let encoded_instr = bytecode::encode_instruction(opcode, operand)
@@ -98,7 +100,8 @@ impl Assembler {
             match instr {
                 ir::Instruction::Jmp(dest)
                 | ir::Instruction::Jz(dest)
-                | ir::Instruction::Jnz(dest) => {
+                | ir::Instruction::Jnz(dest)
+                | ir::Instruction::Call(dest) => {
                     let block_src = self
                         .jmps
                         .get(&label)

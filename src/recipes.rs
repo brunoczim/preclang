@@ -6,8 +6,8 @@ use crate::{
     assembler::Assembler,
     bytecode,
     compiler::Compiler,
-    error::{Ice, ResolvedDiagnostics, Resolver},
-    eval::Evaluate,
+    error::{FatalError, ResolvedDiagnostics, Resolver},
+    eval::{Env, Evaluate},
     lexer::Lexer,
     parser::Parser,
     vm::Machine,
@@ -50,13 +50,20 @@ pub fn run<'a>(
     code: &'a str,
     input: &str,
     parse_nest_limit: usize,
+    stack_limit: usize,
     interpreter: Interpreter,
-) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
+) -> Result<Result<String, ResolvedDiagnostics<'a>>, FatalError> {
     match interpreter {
-        Interpreter::Ast => run_directly_on_ast(code, input, parse_nest_limit),
-        Interpreter::Bytecode => {
-            run_on_bytecode(code, input, parse_nest_limit, usize::MAX)
+        Interpreter::Ast => {
+            run_directly_on_ast(code, input, parse_nest_limit, stack_limit)
         },
+        Interpreter::Bytecode => run_on_bytecode(
+            code,
+            input,
+            parse_nest_limit,
+            usize::MAX,
+            stack_limit,
+        ),
     }
 }
 
@@ -64,7 +71,8 @@ pub fn run_directly_on_ast<'a>(
     code: &'a str,
     input: &str,
     parse_nest_limit: usize,
-) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
+    stack_limit: usize,
+) -> Result<Result<String, ResolvedDiagnostics<'a>>, FatalError> {
     let resolver = Resolver::new(code);
     let lexer = Lexer::new(code);
     let parser = Parser::new(lexer, parse_nest_limit);
@@ -72,7 +80,8 @@ pub fn run_directly_on_ast<'a>(
         Ok(ast) => ast,
         Err(errors) => return Ok(Err(resolver.resolve_errors(errors)?)),
     };
-    let (output, _) = ast.evaluate(input);
+    let mut env = Env::new(stack_limit);
+    let (output, _) = ast.evaluate(input, &mut env)?;
     Ok(Ok(output))
 }
 
@@ -81,7 +90,8 @@ pub fn run_on_bytecode<'a>(
     input: &str,
     parse_nest_limit: usize,
     interpret_limit: usize,
-) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
+    stack_limit: usize,
+) -> Result<Result<String, ResolvedDiagnostics<'a>>, FatalError> {
     let resolver = Resolver::new(code);
     let lexer = Lexer::new(code);
     let parser = Parser::new(lexer, parse_nest_limit);
@@ -93,7 +103,7 @@ pub fn run_on_bytecode<'a>(
     let ir_program = compiler.compile(ast.data)?;
     let assembler = Assembler::new();
     let program = assembler.assemble(&ir_program)?;
-    let mut machine = Machine::new(program);
+    let mut machine = Machine::new(program, stack_limit);
     machine.set_text(input);
     machine.run_until_end(interpret_limit)?;
     let output = machine.into_text();
@@ -104,7 +114,7 @@ pub fn emit_asm<'a>(
     code: &'a str,
     parse_nest_limit: usize,
     expand_subs: bool,
-) -> Result<Result<String, ResolvedDiagnostics<'a>>, Ice> {
+) -> Result<Result<String, ResolvedDiagnostics<'a>>, FatalError> {
     let resolver = Resolver::new(code);
     let lexer = Lexer::new(code);
     let parser = Parser::new(lexer, parse_nest_limit);

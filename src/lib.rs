@@ -11,7 +11,6 @@ pub mod parser;
 pub mod eval;
 pub mod compiler;
 pub mod ir;
-pub mod optimizer;
 pub mod assembler;
 pub mod bytecode;
 pub mod vm;

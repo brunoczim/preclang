@@ -5,12 +5,13 @@ use thiserror::Error;
 use crate::{
     assembler,
     compiler,
+    eval,
     location::{Location, Span},
     vm,
 };
 
 #[derive(Debug, Error)]
-pub enum Ice {
+pub enum FatalError {
     #[error(transparent)]
     InvalidSpan(#[from] InvalidSpan),
     #[error(transparent)]
@@ -19,6 +20,8 @@ pub enum Ice {
     Assemble(#[from] assembler::Error),
     #[error(transparent)]
     Vm(#[from] vm::Error),
+    #[error(transparent)]
+    Eval(#[from] eval::Error),
 }
 
 #[derive(Debug, Error)]

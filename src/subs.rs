@@ -146,3 +146,42 @@ impl fmt::Display for Substitution {
         write!(f, "s/{}/{}/{}", self.pattern, self.replacement, self.flags)
     }
 }
+
+impl Substitution {
+    pub fn evaluate_raw<'s>(&'s self, input: &str) -> (String, bool) {
+        let mut output = String::new();
+        let mut flag = false;
+        let mut i = 0;
+
+        for captures in self.pattern.regex.captures_iter(input) {
+            let Some(main) = captures.get(0) else { break };
+            let j = main.start();
+            output.push_str(&input[i .. j]);
+
+            flag = true;
+            for fragment in &self.replacement.fragments {
+                match fragment {
+                    Fragment::Text(text) => output.push_str(text),
+                    Fragment::RefInt(i) => {
+                        if let Some(capture) = captures.get(*i as usize) {
+                            output.push_str(capture.as_str());
+                        }
+                    },
+                    Fragment::RefName(ident) => {
+                        if let Some(capture) = captures.name(ident) {
+                            output.push_str(capture.as_str());
+                        }
+                    },
+                }
+            }
+
+            i = main.end();
+            if !self.flags.test(Flag::Global) {
+                break;
+            }
+        }
+
+        output.push_str(&input[i ..]);
+        (output, flag)
+    }
+}

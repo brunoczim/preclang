@@ -32,11 +32,29 @@ pub enum Punctuation {
 
 impl SpanlessEq for Punctuation {}
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Keyword {
+    Let,
+    In,
+}
+
+impl SpanlessEq for Keyword {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PseudoOperator {
+    Assign,
+}
+
+impl SpanlessEq for PseudoOperator {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Operator(Operator),
+    PseudoOperator(PseudoOperator),
     Substitution(Substitution),
     Punct(Punctuation),
+    Keyword(Keyword),
+    Ident(String),
 }
 
 impl SpanlessEq for Token {}

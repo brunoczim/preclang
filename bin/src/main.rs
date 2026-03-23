@@ -10,7 +10,7 @@ use std::{
 
 use clap::Parser;
 use preclang::{
-    error::{Ice, ResolvedDiagnostics},
+    error::{FatalError, ResolvedDiagnostics},
     recipes::{self, Interpreter, emit_asm},
 };
 use thiserror::Error;
@@ -67,7 +67,7 @@ enum ErrorKind {
     #[error(transparent)]
     Io(#[from] io::Error),
     #[error(transparent)]
-    Ice(#[from] Ice),
+    Ice(#[from] FatalError),
     #[error("{0}")]
     Lang(String),
 }
@@ -105,13 +105,22 @@ struct Cli {
     ///
     /// If provided, positional source code path will not be accepted.
     /// Standard input will still be available to input text.
-    #[clap(short, long, value_name = "CODE")]
+    #[clap(
+        short,
+        long,
+        value_name = "CODE",
+        required_unless_present_any = ["file_program", "stdin_program"],
+    )]
     program: Option<String>,
     /// Path to the file containing the source code.
     ///
     /// Accepted and required only if no other means of providing source code
     /// is specified.
-    #[clap(conflicts_with = "program", value_name = "PROGRAM_PATH")]
+    #[clap(
+        conflicts_with = "program",
+        value_name = "PROGRAM_PATH",
+        required_unless_present_any = ["program", "stdin_program"],
+    )]
     file_program: Option<PathBuf>,
     /// Uses standard input to receive source code.
     ///
@@ -121,10 +130,10 @@ struct Cli {
     /// means must be used to provide it.
     #[clap(
         long,
-        conflicts_with = "file_program",
-        conflicts_with = "program",
+        conflicts_with_all = ["file_program", "program"],
         requires = "input",
-        requires = "file_input"
+        requires = "file_input",
+        required_unless_present_any = ["file_program", "program"],
     )]
     stdin_program: bool,
     /// Inline input text.
@@ -202,7 +211,13 @@ fn try_main(cli: Cli) -> Result<(), Error> {
         let input = input_source.read()?;
         let interpreter = cli.interpreter.into();
 
-        recipes::run(&program[..], &input[..], usize::MAX, interpreter)
+        recipes::run(
+            &program[..],
+            &input[..],
+            usize::MAX,
+            usize::MAX,
+            interpreter,
+        )
     };
 
     let output = result

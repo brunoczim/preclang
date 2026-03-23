@@ -3,11 +3,19 @@ use std::mem;
 use thiserror::Error;
 
 use crate::{
-    ast::Expr,
+    ast::{self, Binding, Expr, Ident},
     error::LangError,
     lexer::{LexError, Lexer},
     location::{Location, Span, Spanned},
-    token::{BinaryOperator, Operator, PrefixOperator, Punctuation, Token},
+    token::{
+        BinaryOperator,
+        Keyword,
+        Operator,
+        PrefixOperator,
+        PseudoOperator,
+        Punctuation,
+        Token,
+    },
 };
 
 fn bin_precedence(operator: BinaryOperator) -> i32 {
@@ -28,10 +36,16 @@ fn pre_precedence(operator: PrefixOperator) -> i32 {
 pub enum ParseError {
     #[error(transparent)]
     Lex(LexError),
+    #[error("unexpected token")]
+    UnexpectedToken(Span),
     #[error("too much nesting")]
     NestLimit(Location),
     #[error("unmatched open parenthesis")]
     UnmatchedOpenParen(Span),
+    #[error("unmatched close parenthesis")]
+    UnmatchedCloseParen(Span),
+    #[error("let-in block is missing the in clause")]
+    MissingInClause(Span),
     #[error("bad operand position")]
     BadOperand(Location),
     #[error("bad operator position")]
@@ -40,18 +54,27 @@ pub enum ParseError {
     MissingOperand(Location),
     #[error("missing operator")]
     MissingOperator(Location),
+    #[error("premature end of program")]
+    UnexpectedEof(Location),
+    #[error("expected identifier")]
+    ExpectedName(Span),
 }
 
 impl LangError for ParseError {
     fn span(&self) -> Span {
         match self {
             Self::Lex(error) => error.span(),
+            Self::UnexpectedToken(span) => *span,
             Self::NestLimit(start) => Span::unitary(*start),
             Self::UnmatchedOpenParen(span) => *span,
+            Self::UnmatchedCloseParen(span) => *span,
+            Self::MissingInClause(span) => *span,
             Self::BadOperand(start) => Span::unitary(*start),
             Self::BadOperator(start) => Span::unitary(*start),
             Self::MissingOperand(start) => Span::unitary(*start),
             Self::MissingOperator(start) => Span::unitary(*start),
+            Self::UnexpectedEof(start) => Span::unitary(*start),
+            Self::ExpectedName(span) => *span,
         }
     }
 }
@@ -66,9 +89,64 @@ enum ExprItem {
 }
 
 #[derive(Debug, Clone)]
-struct ExprFrame {
+struct ParenFrame {
     open_paren: Span,
     stack: Vec<ExprItem>,
+}
+
+#[derive(Debug, Clone)]
+struct LetFrame {
+    bindings: Vec<Spanned<Binding>>,
+    curr_let_span: Span,
+    curr_ident: Spanned<String>,
+    curr_assign_span: Span,
+}
+
+impl LetFrame {
+    pub fn full_span(&self) -> Span {
+        Span {
+            start: self
+                .bindings
+                .first()
+                .map_or(self.curr_let_span, |binding| binding.span)
+                .start,
+            end: self
+                .bindings
+                .last()
+                .map_or(self.curr_assign_span, |binding| binding.span)
+                .end,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct LetInFrame {
+    bindings: Vec<Spanned<Binding>>,
+    in_span: Span,
+}
+
+impl LetInFrame {
+    pub fn full_span(&self) -> Span {
+        Span {
+            start: self
+                .bindings
+                .first()
+                .map_or(self.in_span, |binding| binding.span)
+                .start,
+            end: self
+                .bindings
+                .last()
+                .map_or(self.in_span, |binding| binding.span)
+                .end,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ExprFrame {
+    Paren(ParenFrame),
+    Let(LetFrame),
+    LetIn(LetInFrame),
 }
 
 #[derive(Debug)]
@@ -77,7 +155,7 @@ pub struct Parser<'a> {
     location: usize,
     limit: usize,
     errors: Vec<ParseError>,
-    expr_stacks: Vec<ExprFrame>,
+    expr_frames: Vec<ExprFrame>,
     expr_stack: Vec<ExprItem>,
 }
 
@@ -88,7 +166,7 @@ impl<'a> Parser<'a> {
             limit,
             location: 0,
             errors: Vec::new(),
-            expr_stacks: Vec::new(),
+            expr_frames: Vec::new(),
             expr_stack: Vec::new(),
         }
     }
@@ -97,22 +175,34 @@ impl<'a> Parser<'a> {
         self.parse_expr().map_err(|_| self.errors)
     }
 
-    pub fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseFailed> {
+    fn parse_expr(&mut self) -> Result<Spanned<Expr>, ParseFailed> {
         loop {
             let Some(token) = self.next_token()? else {
-                if let Some(frame) = self.expr_stacks.last() {
-                    self.errors
-                        .push(ParseError::UnmatchedOpenParen(frame.open_paren));
-                    Err(ParseFailed)?
+                match self.expr_frames.last() {
+                    Some(ExprFrame::Paren(frame)) => {
+                        self.errors.push(ParseError::UnmatchedOpenParen(
+                            frame.open_paren,
+                        ));
+                        Err(ParseFailed)?
+                    },
+                    Some(ExprFrame::Let(frame)) => {
+                        self.errors.push(ParseError::MissingInClause(
+                            frame.full_span(),
+                        ));
+                        Err(ParseFailed)?
+                    },
+                    Some(ExprFrame::LetIn(_)) => {},
+                    None => return self.finish_expr(),
                 }
-                return self.finish_expr();
+                self.leave_let_like()?;
+                continue;
             };
             match token.data {
                 Token::Punct(Punctuation::OpenParen) => {
-                    self.enter(token.span)?;
+                    self.enter_paren(token.span)?;
                 },
                 Token::Punct(Punctuation::CloseParen) => {
-                    self.leave()?;
+                    self.leave_paren(token.span)?;
                 },
                 Token::Substitution(subs) => {
                     self.push_operand(Expr::new_subs(token.span, subs))?;
@@ -122,6 +212,20 @@ impl<'a> Parser<'a> {
                         data: operator,
                         span: token.span,
                     })?;
+                },
+                Token::PseudoOperator(_) => {
+                    self.errors.push(ParseError::UnexpectedToken(token.span));
+                    Err(ParseFailed)?
+                },
+                Token::Keyword(keyword) => match keyword {
+                    Keyword::Let => self.enter_let(token.span)?,
+                    Keyword::In => self.enter_let_in(token.span)?,
+                },
+                Token::Ident(data) => {
+                    self.push_operand(Expr::new_ident(Spanned {
+                        data,
+                        span: token.span,
+                    }))?;
                 },
             }
         }
@@ -142,28 +246,146 @@ impl<'a> Parser<'a> {
         Ok(Some(token))
     }
 
-    fn enter(&mut self, open_paren: Span) -> Result<(), ParseFailed> {
-        if self.limit <= self.expr_stacks.len() {
+    fn enter_paren(&mut self, open_paren: Span) -> Result<(), ParseFailed> {
+        if self.limit <= self.expr_frames.len() {
             self.errors.push(ParseError::NestLimit(self.location));
             Err(ParseFailed)?
         }
-        self.expr_stacks.push(ExprFrame {
+        self.expr_frames.push(ExprFrame::Paren(ParenFrame {
             open_paren,
             stack: mem::take(&mut self.expr_stack),
-        });
+        }));
         Ok(())
     }
 
-    fn leave(&mut self) -> Result<(), ParseFailed> {
+    fn leave_paren(&mut self, close_paren: Span) -> Result<(), ParseFailed> {
         let finish_result = self.finish_expr();
-        let Some(frame) = self.expr_stacks.pop() else {
+        let Some(frame) = self.expr_frames.pop() else {
             self.expr_stack = Vec::new();
-            self.errors.push(ParseError::NestLimit(self.location));
+            self.errors.push(ParseError::UnmatchedCloseParen(close_paren));
+            Err(ParseFailed)?
+        };
+        let ExprFrame::Paren(frame) = frame else {
+            self.expr_stack = Vec::new();
+            self.errors.push(ParseError::UnmatchedCloseParen(close_paren));
             Err(ParseFailed)?
         };
         self.expr_stack = frame.stack;
         if let Ok(expr) = finish_result {
             self.push_operand(expr)?;
+        }
+        Ok(())
+    }
+
+    fn enter_let(&mut self, let_kw: Span) -> Result<(), ParseFailed> {
+        self.leave_let_like()?;
+        let Some(name_token) = self.next_token()? else {
+            self.errors.push(ParseError::UnexpectedEof(self.location));
+            Err(ParseFailed)?
+        };
+        let Token::Ident(name) = name_token.data else {
+            self.errors.push(ParseError::ExpectedName(name_token.span));
+            Err(ParseFailed)?
+        };
+        let Some(assign_token) = self.next_token()? else {
+            self.errors.push(ParseError::UnexpectedEof(self.location));
+            Err(ParseFailed)?
+        };
+        let Token::PseudoOperator(PseudoOperator::Assign) = assign_token.data
+        else {
+            self.errors.push(ParseError::ExpectedName(name_token.span));
+            Err(ParseFailed)?
+        };
+        let bindings = match self.expr_frames.pop() {
+            Some(ExprFrame::Let(existing)) => existing.bindings,
+            Some(last_frame) => {
+                self.expr_frames.push(last_frame);
+                Vec::new()
+            },
+            None => Vec::new(),
+        };
+        let frame = LetFrame {
+            curr_ident: Spanned { data: name, span: name_token.span },
+            curr_let_span: let_kw,
+            curr_assign_span: assign_token.span,
+            bindings,
+        };
+        self.expr_frames.push(ExprFrame::Let(frame));
+        Ok(())
+    }
+
+    fn enter_let_in(&mut self, in_kw: Span) -> Result<(), ParseFailed> {
+        self.leave_let_like()?;
+        let bindings = match self.expr_frames.pop() {
+            Some(ExprFrame::Let(existing)) => existing.bindings,
+            last_frame => {
+                self.errors.push(ParseError::UnexpectedToken(in_kw));
+                self.expr_frames.extend(last_frame);
+                Err(ParseFailed)?
+            },
+        };
+        let frame = LetInFrame { in_span: in_kw, bindings };
+        self.expr_frames.push(ExprFrame::LetIn(frame));
+        Ok(())
+    }
+
+    fn leave_let_like(&mut self) -> Result<(), ParseFailed> {
+        loop {
+            let last_frame = self.expr_frames.pop();
+            match last_frame {
+                Some(ExprFrame::Let(mut frame)) => {
+                    let value = match self.finish_expr() {
+                        Ok(value) => value,
+                        Err(e) => {
+                            self.expr_frames.push(ExprFrame::Let(frame));
+                            return Err(e);
+                        },
+                    };
+                    frame.bindings.push(Spanned {
+                        span: Span {
+                            start: frame.curr_let_span.start,
+                            end: value.span.end,
+                        },
+                        data: Binding {
+                            name: Ident {
+                                content: Spanned {
+                                    data: mem::take(&mut frame.curr_ident.data),
+                                    span: frame.curr_ident.span,
+                                },
+                            },
+                            value,
+                        },
+                    });
+                    self.expr_frames.push(ExprFrame::Let(frame));
+                    break;
+                },
+
+                Some(ExprFrame::LetIn(frame)) => {
+                    let value = match self.finish_expr() {
+                        Ok(value) => value,
+                        Err(e) => {
+                            self.expr_frames.push(ExprFrame::LetIn(frame));
+                            return Err(e);
+                        },
+                    };
+                    let span = Span {
+                        start: frame.full_span().start,
+                        end: value.span.end,
+                    };
+                    self.push_operand(Spanned {
+                        data: ast::Expr::LetInClause(Box::new(ast::LetIn {
+                            bindings: frame.bindings,
+                            main: value,
+                        })),
+                        span,
+                    })?;
+                },
+                Some(last_frame @ ExprFrame::Paren(_)) => {
+                    self.expr_frames.push(last_frame);
+                    break;
+                },
+                None => break,
+            }
         }
         Ok(())
     }

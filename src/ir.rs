@@ -42,6 +42,8 @@ pub enum Instruction {
     Swap,
     Subs(SubsId),
     Not,
+    Call(BlockId),
+    Ret,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

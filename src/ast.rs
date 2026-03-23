@@ -9,6 +9,8 @@ pub enum Expr {
     Substitution(Box<Substitution>),
     BinaryOperation(Box<BinaryOperation>),
     PrefixOperation(Box<PrefixOperation>),
+    Ident(Box<Ident>),
+    LetInClause(Box<LetIn>),
 }
 
 impl Expr {
@@ -40,6 +42,22 @@ impl Expr {
             rhs,
         }));
         Spanned { span, data }
+    }
+
+    pub fn new_let_in(
+        bindings: Vec<Spanned<Binding>>,
+        main: Spanned<Self>,
+    ) -> Spanned<Self> {
+        let let_in = LetIn { bindings, main };
+        let span = let_in.full_span();
+        let data = Self::LetInClause(Box::new(let_in));
+        Spanned { data, span }
+    }
+
+    pub fn new_ident(content: Spanned<String>) -> Spanned<Self> {
+        let span = content.span;
+        let data = Self::Ident(Box::new(Ident { content }));
+        Spanned { data, span }
     }
 }
 
@@ -85,5 +103,34 @@ impl PrefixOperation {
     fn spanless_eq(&self, other: &Self) -> bool {
         self.operator.spanless_eq(&other.operator)
             && self.operand.spanless_eq(&other.operand)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ident {
+    pub content: Spanned<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binding {
+    pub name: Ident,
+    pub value: Spanned<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LetIn {
+    pub bindings: Vec<Spanned<Binding>>,
+    pub main: Spanned<Expr>,
+}
+
+impl LetIn {
+    pub fn full_span(&self) -> Span {
+        let start = self
+            .bindings
+            .first()
+            .map_or(self.main.span, |binding| binding.span)
+            .start;
+        let end = self.main.span.end;
+        Span { start, end }
     }
 }

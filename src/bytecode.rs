@@ -241,7 +241,7 @@ impl<'a> fmt::Display for Emit<'a> {
         for (label, instruction) in self.program.instructions() {
             let (opcode, operand) = decode_instruction(instruction);
             let dest = match opcode {
-                opcodes::JMP | opcodes::JZ | opcodes::JNZ => {
+                opcodes::JMP | opcodes::JZ | opcodes::JNZ | opcodes::CALL => {
                     label + 1 + operand
                 },
                 _ => continue,
@@ -274,6 +274,8 @@ impl<'a> fmt::Display for Emit<'a> {
                     }
                 },
                 opcodes::NOT => write!(f, "not")?,
+                opcodes::CALL => write!(f, "call L_{}", label + 1 + operand)?,
+                opcodes::RET => write!(f, "ret")?,
                 _ => write!(f, "??")?,
             }
             write!(f, "\n")?;
@@ -305,4 +307,8 @@ pub mod opcodes {
     pub const SUBS: Opcode = 7;
 
     pub const NOT: Opcode = 8;
+
+    pub const CALL: Opcode = 9;
+
+    pub const RET: Opcode = 10;
 }

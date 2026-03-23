@@ -7,7 +7,15 @@ use crate::{
     error::LangError,
     location::{Location, Span, Spanned},
     subs::{Flag, Flags, Fragment, Pattern, Replacement, Substitution},
-    token::{BinaryOperator, Operator, PrefixOperator, Punctuation, Token},
+    token::{
+        BinaryOperator,
+        Keyword,
+        Operator,
+        PrefixOperator,
+        PseudoOperator,
+        Punctuation,
+        Token,
+    },
 };
 
 #[derive(Debug, Clone, Error)]
@@ -79,11 +87,19 @@ impl<'input> Lexer<'input> {
     }
 
     fn is_operator(&self, ch: char) -> bool {
-        ";&|!".contains(ch)
+        ";&|!=".contains(ch)
     }
 
     fn is_punct(&self, ch: char) -> bool {
         "()".contains(ch)
+    }
+
+    fn is_ident_start(&self, ch: char) -> bool {
+        ch.is_alphabetic() || ch == '_'
+    }
+
+    fn is_ident_tail(&self, ch: char) -> bool {
+        ch.is_alphanumeric() || ch == '_'
     }
 
     fn lex_subs(&mut self, ch: char) -> Result<Spanned<Token>, LexError> {
@@ -103,8 +119,9 @@ impl<'input> Lexer<'input> {
         }
         self.advance();
         let pattern_range = self.lex_pattern_range(start)?;
-        let replacement = self.lex_replacement(start)?;
-        let flags = self.lex_flags()?;
+        let (replacement, can_flags) = self.lex_replacement(start)?;
+        let flags =
+            if can_flags { self.lex_flags()? } else { Flags::default() };
         let mut regex_builder = RegexBuilder::new(
             &self.full_input[pattern_range.start .. pattern_range.end],
         );
@@ -149,6 +166,11 @@ impl<'input> Lexer<'input> {
                         end: self.position,
                     }))?
                 }
+            } else if ch == '\n' {
+                Err(LexError::PrematureSubsEnd(Span {
+                    start: subs_start,
+                    end: self.position,
+                }))?
             } else if ch == '/' {
                 break;
             }
@@ -161,12 +183,12 @@ impl<'input> Lexer<'input> {
     fn lex_replacement(
         &mut self,
         subs_start: usize,
-    ) -> Result<Replacement, LexError> {
+    ) -> Result<(Replacement, bool), LexError> {
         let mut fragments = Vec::new();
         let mut text_start = self.position;
 
-        loop {
-            let Some(ch) = self.current else { break };
+        let can_flags = loop {
+            let Some(ch) = self.current else { break false };
             if ch == '\\' {
                 let text_end = self.position;
                 self.advance();
@@ -191,12 +213,14 @@ impl<'input> Lexer<'input> {
                     text_start = self.position;
                     fragments.push(fragment);
                 }
+            } else if ch == '\n' {
+                break false;
             } else if ch == '/' {
-                break;
+                break true;
             } else {
                 self.advance();
             }
-        }
+        };
 
         if text_start != self.position {
             fragments.push(Fragment::Text(
@@ -204,7 +228,7 @@ impl<'input> Lexer<'input> {
             ));
         }
 
-        Ok(Replacement { fragments })
+        Ok((Replacement { fragments }, can_flags))
     }
 
     fn lex_number_fragment(&mut self) -> Result<Fragment, LexError> {
@@ -322,13 +346,14 @@ impl<'input> Lexer<'input> {
             self.advance();
             end = self.position;
         }
-        let token = Token::Operator(match &self.full_input[start .. end] {
-            ";" => Operator::Binary(BinaryOperator::Semicolon),
-            "|" => Operator::Binary(BinaryOperator::Pipe),
-            "&" => Operator::Binary(BinaryOperator::Ampersand),
-            "!" => Operator::Prefix(PrefixOperator::Bang),
+        let token = match &self.full_input[start .. end] {
+            ";" => Token::Operator(Operator::Binary(BinaryOperator::Semicolon)),
+            "|" => Token::Operator(Operator::Binary(BinaryOperator::Pipe)),
+            "&" => Token::Operator(Operator::Binary(BinaryOperator::Ampersand)),
+            "!" => Token::Operator(Operator::Prefix(PrefixOperator::Bang)),
+            "=" => Token::PseudoOperator(PseudoOperator::Assign),
             _ => Err(LexError::InvalidOperator(Span { start, end }))?,
-        });
+        };
         Ok(Spanned { data: token, span: Span { start, end } })
     }
 
@@ -341,6 +366,22 @@ impl<'input> Lexer<'input> {
             ")" => Punctuation::CloseParen,
             _ => Err(LexError::InvalidPunct(start))?,
         });
+        Ok(Spanned { data: token, span: Span { start, end } })
+    }
+
+    fn lex_ident_or_kw(&mut self) -> Result<Spanned<Token>, LexError> {
+        let start = self.position;
+        self.advance();
+        let mut end = self.position;
+        while self.current.is_some_and(|ch| self.is_ident_tail(ch)) {
+            self.advance();
+            end = self.position;
+        }
+        let token = match &self.full_input[start .. end] {
+            "let" => Token::Keyword(Keyword::Let),
+            "in" => Token::Keyword(Keyword::In),
+            s => Token::Ident(s.to_string()),
+        };
         Ok(Spanned { data: token, span: Span { start, end } })
     }
 }
@@ -363,6 +404,9 @@ impl<'input> Iterator for Lexer<'input> {
             }
             if self.is_punct(ch) {
                 break Some(self.lex_punct());
+            }
+            if self.is_ident_start(ch) {
+                break Some(self.lex_ident_or_kw());
             }
             let error = LexError::InvalidChar(self.position);
             self.advance();
